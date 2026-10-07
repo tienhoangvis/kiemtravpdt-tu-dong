@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>Cài đặt – Kiểm tra VPĐT tự động</title>
+  <link rel="stylesheet" href="../sidepanel/sidepanel.css" />
+  <style>
+    body { max-width: 760px; margin: 0 auto; padding: 24px 16px; font-size: 14px; }
+    label { display: block; font-weight: 600; margin-top: 12px; }
+    label small { font-weight: 400; display: block; }
+    input[type=text], input[type=password], input[type=number], select, textarea {
+      width: 100%; margin-top: 4px; padding: 7px 9px; font: inherit;
+      border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text);
+    }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+    @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+    h2 { font-size: 15px; margin: 0 0 4px; }
+    .sites li { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img src="../icons/icon48.png" alt="" />
+      <h1>Cài đặt – Kiểm tra VPĐT tự động</h1>
+    </div>
+  </header>
+
+  <div class="card">
+    <h2>DeepSeek API</h2>
+    <label>API key
+      <small class="muted">Lấy tại <a href="https://platform.deepseek.com/api_keys" target="_blank">platform.deepseek.com/api_keys</a>. Key chỉ lưu trên máy này.</small>
+      <input type="password" id="apiKey" placeholder="sk-..." autocomplete="off" />
+    </label>
+    <div class="grid">
+      <label>Model
+        <input type="text" id="model" list="models" />
+        <datalist id="models">
+          <option value="deepseek-chat">deepseek-chat (nhanh, rẻ)</option>
+          <option value="deepseek-reasoner">deepseek-reasoner (suy luận sâu, chậm hơn)</option>
+        </datalist>
+      </label>
+      <label>Địa chỉ API (Base URL)
+        <input type="text" id="baseUrl" />
+      </label>
+      <label>Nhiệt độ (0 – 1.5)
+        <input type="number" id="temperature" min="0" max="1.5" step="0.1" />
+      </label>
+      <label>Giới hạn ký tự gửi AI
+        <input type="number" id="maxChars" min="5000" step="1000" />
+      </label>
+      <label>Số trang PDF tối đa / file
+        <input type="number" id="maxPdfPages" min="1" max="500" />
+      </label>
+    </div>
+    <div class="row mt">
+      <button id="btnTest">Kiểm tra kết nối</button>
+      <span id="testResult"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Thông tin đơn vị (để AI soạn ý kiến xử lý phù hợp)</h2>
+    <div class="grid">
+      <label>Tên đơn vị <input type="text" id="orgName" /></label>
+      <label>Chức danh người xử lý <input type="text" id="userRole" /></label>
+    </div>
+    <label>Danh sách phòng/ban/người nhận
+      <small class="muted">Mỗi dòng một đơn vị (vd. "P. TCLĐ - Phòng Tổ chức lao động").</small>
+      <textarea id="departments" rows="7"></textarea>
+    </label>
+    <label>Yêu cầu bổ sung cho AI
+      <small class="muted">Vd. "Văn bản của Bộ Xây dựng luôn sao gửi Chủ tịch"; "Giấy mời giao P. HCTH bố trí người dự".</small>
+      <textarea id="customInstructions" rows="4"></textarea>
+    </label>
+  </div>
+
+  <div class="card">
+    <h2>Hành vi</h2>
+    <label class="check"><input type="checkbox" id="autoAnalyze" /> Tự động phân tích khi mở một văn bản (khi side panel đang mở)</label>
+    <label class="check"><input type="checkbox" id="useCache" /> Dùng lại kết quả trong lịch sử khi mở lại cùng văn bản (chế độ tự động)</label>
+  </div>
+
+  <div class="card">
+    <h2>Trang VPĐT đã cho phép</h2>
+    <ul id="sites" class="sites"></ul>
+    <p class="hint">Để thêm trang: mở trang VPĐT, bấm biểu tượng tiện ích và chọn "Bật trên trang này".</p>
+  </div>
+
+  <div class="row">
+    <button id="btnSave" class="primary">Lưu cài đặt</button>
+    <span id="saveResult"></span>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

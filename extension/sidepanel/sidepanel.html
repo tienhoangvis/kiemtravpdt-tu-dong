@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Kiểm tra VPĐT tự động</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img src="../icons/icon48.png" alt="" />
+      <div>
+        <h1>Kiểm tra VPĐT tự động</h1>
+        <small id="modelInfo">DeepSeek AI</small>
+      </div>
+    </div>
+    <button id="btnSettings" class="icon" title="Cài đặt">⚙</button>
+  </header>
+
+  <div id="connectBox" class="card warn hidden">
+    <p id="connectMsg">Tiện ích chưa được bật trên trang này.</p>
+    <button id="btnConnect" class="primary">Bật trên trang này</button>
+  </div>
+
+  <div id="keyBox" class="card warn hidden">
+    <p>Chưa có DeepSeek API key.</p>
+    <button id="btnOpenSettings" class="primary">Nhập API key</button>
+  </div>
+
+  <nav class="tabs">
+    <button data-tab="doc" class="active">Văn bản đang xem</button>
+    <button data-tab="list">Rà soát danh sách</button>
+    <button data-tab="history">Lịch sử</button>
+  </nav>
+
+  <!-- TAB 1: Văn bản đang xem -->
+  <section id="tab-doc" class="tab">
+    <div class="card">
+      <div class="row between">
+        <strong>Văn bản</strong>
+        <button id="btnRefresh" class="link">↻ Làm mới</button>
+      </div>
+      <p id="docTitle" class="muted">Mở một văn bản (Văn bản đến → VB đã nhận → bấm vào văn bản).</p>
+
+      <div class="row between mt">
+        <strong>File đã thu thập <span id="fileCount" class="badge">0</span></strong>
+        <button id="btnClearFiles" class="link">Xoá</button>
+      </div>
+      <ul id="fileList" class="files"></ul>
+      <p class="hint">Mẹo: bấm vào từng file đi kèm trong trình xem của VPĐT (biểu tượng nhiều lớp) để tiện ích tự thu thập.</p>
+
+      <details id="linksBox" class="mt hidden">
+        <summary>Liên kết file trên trang (<span id="linkCount">0</span>)</summary>
+        <ul id="linkList" class="files"></ul>
+      </details>
+
+      <label class="upload mt">
+        <input id="fileInput" type="file" accept=".pdf,.docx,.xlsx,.txt" multiple />
+        <span>+ Thêm file từ máy tính</span>
+      </label>
+
+      <label class="check mt"><input type="checkbox" id="autoAnalyze" /> Tự động phân tích khi mở văn bản</label>
+
+      <div class="row mt">
+        <button id="btnAnalyze" class="primary grow">🤖 Đọc &amp; phân tích bằng AI</button>
+        <button id="btnStop" class="hidden">Dừng</button>
+      </div>
+      <div id="status" class="status hidden"></div>
+    </div>
+
+    <div id="result" class="hidden">
+      <div class="card">
+        <div class="row between">
+          <strong>Ý kiến xử lý đề xuất</strong>
+          <span id="priority" class="pill"></span>
+        </div>
+        <textarea id="opinion" rows="4"></textarea>
+        <div class="row">
+          <button id="btnCopy">📋 Sao chép</button>
+          <button id="btnFill" class="primary grow">✍ Điền vào ô "Ý kiến xử lý"</button>
+        </div>
+        <p class="hint">Bấm nút "Ý kiến xử lý" trên VPĐT, nhấp vào ô nhập nội dung rồi bấm "Điền". Luôn kiểm tra lại trước khi gửi.</p>
+      </div>
+
+      <div class="card">
+        <strong>Tóm tắt</strong>
+        <p id="summary"></p>
+        <table id="meta" class="meta"></table>
+      </div>
+
+      <div class="card" id="pointsCard">
+        <strong>Nội dung chính</strong>
+        <ul id="points"></ul>
+      </div>
+
+      <div class="card" id="tasksCard">
+        <strong>Nhiệm vụ / thời hạn</strong>
+        <ul id="tasks"></ul>
+      </div>
+
+      <div class="card" id="attCard">
+        <strong>File đính kèm</strong>
+        <ul id="attachments"></ul>
+      </div>
+
+      <div class="card warn" id="noteCard">
+        <strong>Lưu ý</strong>
+        <p id="note"></p>
+      </div>
+
+      <details class="card">
+        <summary>Phản hồi gốc từ AI</summary>
+        <pre id="raw"></pre>
+      </details>
+    </div>
+  </section>
+
+  <!-- TAB 2: Rà soát danh sách -->
+  <section id="tab-list" class="tab hidden">
+    <div class="card">
+      <p class="muted">Mở trang danh sách (vd. Văn bản đến → VB đã nhận → Chưa xử lý), rồi bấm nút dưới đây. AI sẽ đọc các dòng đang hiển thị, sắp xếp ưu tiên và đề xuất hướng xử lý.</p>
+      <div class="row">
+        <button id="btnTriage" class="primary grow">📑 Rà soát danh sách đang hiển thị</button>
+      </div>
+      <div id="triageStatus" class="status hidden"></div>
+    </div>
+    <div id="triageResult" class="hidden">
+      <div class="card"><p id="triageOverview"></p></div>
+      <div id="triageItems"></div>
+    </div>
+  </section>
+
+  <!-- TAB 3: Lịch sử -->
+  <section id="tab-history" class="tab hidden">
+    <div class="row between card-flat">
+      <span class="muted">Các văn bản đã phân tích gần đây (lưu trên máy).</span>
+      <button id="btnClearHistory" class="link">Xoá lịch sử</button>
+    </div>
+    <ul id="historyList" class="history"></ul>
+  </section>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
