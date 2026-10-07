@@ -44,7 +44,7 @@
 
   function isVisible(el) {
     if (!el || !el.getClientRects().length) return false;
-    const st = getComputedStyle(el);
+    const st = (el.ownerDocument.defaultView || window).getComputedStyle(el);
     return st.visibility !== 'hidden' && st.display !== 'none' && Number(st.opacity) > 0.05;
   }
 
@@ -271,38 +271,102 @@
   const KEY_RE = /\d+[\p{L}\p{N}.\-()]*\/[\p{L}\p{N}.\-()\/]+/u;
   const norm = (t) => (t || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
+  // Tất cả tài liệu có thể đọc: trang chính + iframe cùng nguồn (đệ quy).
+  function allDocs() {
+    const docs = [document];
+    for (let i = 0; i < docs.length && i < 20; i++) {
+      docs[i].querySelectorAll('iframe, frame').forEach((f) => {
+        try {
+          if (f.contentDocument && f.contentDocument.body) docs.push(f.contentDocument);
+        } catch (_) {}
+      });
+    }
+    return docs;
+  }
+
+  const ROW_SEL = [
+    'tr', '[role="row"]', '.ag-row', '.dx-data-row', '.k-master-row', '.p-datatable-row', '.mat-row', '.mat-mdc-row',
+    '.el-table__row', '.ant-table-row', '.ui-grid-row', '.rgRow', '.rgAltRow', '.e-row', '.x-grid-row', '.datagrid-row'
+  ].join(',');
+  const CELL_SEL = 'td, [role="gridcell"], [role="cell"], .ag-cell, .e-rowcell, .x-grid-cell, .datagrid-cell';
+
   function docRows() {
     const out = [];
-    document.querySelectorAll('table tbody tr').forEach((tr) => {
-      if (!isVisible(tr) || tr.closest(DIALOG_SEL)) return;
-      const tds = tr.querySelectorAll('td');
-      if (tds.length < 2) return;
-      const text = clean(tr.innerText);
-      const m = KEY_RE.exec(text);
-      if (!m) return;
-      out.push({ tr, key: m[0].replace(/[:,]$/, ''), text });
-    });
+    const seen = new Set();
+    const dlg = topDialog();
+    for (const doc of allDocs()) {
+      for (const tr of doc.querySelectorAll(ROW_SEL)) {
+        if (tr.closest('thead') || tr.querySelector('th, [role="columnheader"]')) continue;
+        if (dlg && dlg.contains(tr)) continue;
+        if (!isVisible(tr)) continue;
+        const text = clean(tr.innerText);
+        if (text.length < 10) continue;
+        const m = KEY_RE.exec(text);
+        if (!m) continue;
+        const key = m[0].replace(/[:,]$/, '');
+        // Hàng lồng nhau hoặc lưới chia nhiều khung: giữ hàng trong cùng, mỗi số ký hiệu một lần.
+        if (tr.querySelector(ROW_SEL) && [...tr.querySelectorAll(ROW_SEL)].some((c) => KEY_RE.test(c.innerText || ''))) continue;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ tr, key, text });
+      }
+    }
     return out;
+  }
+
+  // Thông tin chẩn đoán khi không tìm thấy dòng văn bản nào.
+  function diagnose() {
+    const docs = allDocs();
+    const count = (sel) => docs.reduce((n, d) => n + d.querySelectorAll(sel).length, 0);
+    let sample = '';
+    for (const d of docs) {
+      const walker = d.createTreeWalker(d.body, NodeFilter.SHOW_TEXT);
+      let n;
+      while ((n = walker.nextNode())) {
+        if (KEY_RE.test(n.textContent) && /\d+\/[A-ZĐ]/.test(n.textContent)) {
+          const path = [];
+          for (let e = n.parentElement; e && e !== d.body && path.length < 7; e = e.parentElement) {
+            path.push(e.tagName.toLowerCase() + (e.getAttribute('role') ? `[role=${e.getAttribute('role')}]` : '') + (typeof e.className === 'string' && e.className ? '.' + e.className.trim().split(/\s+/).slice(0, 2).join('.') : ''));
+          }
+          sample = `"${n.textContent.trim().slice(0, 40)}" ← ${path.join(' < ')}`;
+          break;
+        }
+      }
+      if (sample) break;
+    }
+    let crossFrames = 0;
+    document.querySelectorAll('iframe').forEach((f) => {
+      try {
+        void f.contentDocument.body;
+      } catch (_) {
+        crossFrames++;
+      }
+    });
+    return `table=${count('table')} tr=${count('tr')} role=row:${count('[role="row"]')} iframe=${docs.length - 1}${crossFrames ? ` (+${crossFrames} khác nguồn)` : ''} dialog=${topDialog() ? 'có' : 'không'} | ${sample || 'không thấy số ký hiệu nào'}`;
   }
 
   // Văn bản chưa đọc: có chấm tròn màu ở đầu dòng hoặc chữ in đậm.
   function isUnread(tr) {
-    for (const el of tr.querySelectorAll('td *')) {
+    const win = tr.ownerDocument.defaultView || window;
+    const transparent = (c) => !c || c === 'transparent' || /rgba\(.*,\s*0\)$/.test(c);
+    const nodes = tr.querySelectorAll('*');
+    for (const el of nodes) {
       if (el.childElementCount) continue;
       const r = el.getBoundingClientRect();
-      const st = getComputedStyle(el);
+      const st = win.getComputedStyle(el);
       if (r.width >= 4 && r.width <= 14 && Math.abs(r.width - r.height) <= 2 && !el.textContent.trim()) {
-        const bg = st.backgroundColor;
-        if (bg && bg !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(bg) && parseFloat(st.borderRadius) >= r.width / 2 - 1) return true;
+        if (!transparent(st.backgroundColor) && parseFloat(st.borderRadius) >= r.width / 2 - 1) return true;
       }
       const t = el.textContent.trim();
       if (/^[●•⬤]/.test(t)) return true;
       if (t.length > 15 && (parseInt(st.fontWeight, 10) >= 600 || st.fontWeight === 'bold')) return true;
     }
-    // Chấm vẽ bằng ::before
-    for (const el of tr.querySelectorAll('td *')) {
-      const b = getComputedStyle(el, '::before');
-      if (b.content && b.content !== 'none' && parseFloat(b.width) <= 14 && parseFloat(b.borderRadius) > 2 && !/rgba\(.*,\s*0\)$/.test(b.backgroundColor)) return true;
+    // Chấm vẽ bằng ::before / ::after
+    for (const el of nodes) {
+      for (const pseudo of ['::before', '::after']) {
+        const b = win.getComputedStyle(el, pseudo);
+        if (b.content && b.content !== 'none' && parseFloat(b.width) <= 14 && parseFloat(b.borderRadius) > 2 && !transparent(b.backgroundColor)) return true;
+      }
     }
     return false;
   }
@@ -516,7 +580,8 @@
           return fillOpinion(msg.text);
         case 'listDocs': {
           const { loai, breadcrumb: crumb } = detectLoai(topDialog());
-          return { ok: true, loai, breadcrumb: crumb, inDialog: !!topDialog(), docs: listDocs() };
+          const docs = listDocs();
+          return { ok: true, loai, breadcrumb: crumb, inDialog: !!topDialog(), docs, diag: docs.length ? '' : diagnose() };
         }
         case 'openDoc':
           return openDoc(msg.key);

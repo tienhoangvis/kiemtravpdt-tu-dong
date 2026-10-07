@@ -798,6 +798,9 @@ async function runBatch() {
           (before !== todo.length ? `; bỏ qua ${before - todo.length} đã kiểm tra/vượt giới hạn` : '') +
           `. Sẽ kiểm tra ${todo.length}.`
       );
+      if (!all.length && list.diag) {
+        batchLog(`   (Không đọc được bảng danh sách. Chẩn đoán: ${list.diag})`, 'muted');
+      }
       if (opts.scope === 'unread' && all.length && !unread.length) {
         batchLog('   (Không nhận ra văn bản chưa đọc. Nếu thực tế còn, hãy chọn phạm vi "Tất cả văn bản trên trang".)', 'muted');
       }
