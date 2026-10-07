@@ -1,8 +1,10 @@
 // Content script (isolated world). Thu thập nội dung văn bản đang mở, các file
 // đã bắt được, danh sách văn bản và điền ý kiến xử lý vào ô nhập.
 (() => {
-  if (window.__vpdtContentInstalled) return;
-  window.__vpdtContentInstalled = true;
+  // Gắn với phiên bản: khi tiện ích được cập nhật, mã mới thay thế mã cũ trên trang đang mở.
+  const VERSION = chrome.runtime.getManifest().version;
+  if (window.__vpdtContentVersion === VERSION) return;
+  window.__vpdtContentVersion = VERSION;
 
   const IS_TOP = window === window.top;
   const MAX_FILES = 30;
@@ -268,20 +270,42 @@
 
   // ---------- Chế độ tự động: duyệt danh sách, mở / đóng văn bản ----------
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const KEY_RE = /\d+[\p{L}\p{N}.\-()]*\/[\p{L}\p{N}.\-()\/]+/u;
+  // Số ký hiệu: "15914/BXD-PC", "500/ĐHM", "3334/VISHIPEL-NCPT(1)" – sau dấu / phải có chữ cái (loại ngày tháng).
+  const KEY_RE = /\d+[\p{L}\p{N}.\-()]*\/(?=[\p{N}.\-()\/]*\p{L})[\p{L}\p{N}.\-()\/]+/u;
   const norm = (t) => (t || '').replace(/\s+/g, ' ').trim().toLowerCase();
 
   // Tất cả tài liệu có thể đọc: trang chính + iframe cùng nguồn (đệ quy).
+  // Tất cả vùng có thể đọc: trang chính, iframe cùng nguồn và shadow DOM mở.
   function allDocs() {
     const docs = [document];
-    for (let i = 0; i < docs.length && i < 20; i++) {
-      docs[i].querySelectorAll('iframe, frame').forEach((f) => {
+    for (let i = 0; i < docs.length && i < 40; i++) {
+      const root = docs[i];
+      root.querySelectorAll('iframe, frame').forEach((f) => {
         try {
           if (f.contentDocument && f.contentDocument.body) docs.push(f.contentDocument);
         } catch (_) {}
       });
+      root.querySelectorAll('*').forEach((el) => {
+        if (el.shadowRoot && docs.length < 40) docs.push(el.shadowRoot);
+      });
     }
     return docs;
+  }
+
+  function rowVisible(tr) {
+    return isVisible(tr) || [...tr.children].some((c) => isVisible(c));
+  }
+
+  // Dự phòng: chữ của vùng danh sách (bỏ menu bên trái) để AI tổng hợp khi không tách được từng dòng.
+  function listText() {
+    let best = null;
+    for (const el of document.querySelectorAll('main, section, article, div')) {
+      if (!isVisible(el) || (topDialog() && topDialog().contains(el))) continue;
+      const t = el.innerText || '';
+      if (!/(Số ký hiệu|Trích yếu)/i.test(t) || /VĂN BẢN ĐẾN[\s\S]*VĂN BẢN ĐI[\s\S]*VĂN BẢN NỘI BỘ/.test(t)) continue;
+      if (!best || t.length < best.innerText.length) best = el;
+    }
+    return clean((best || document.body).innerText, 15000);
   }
 
   const ROW_SEL = [
@@ -298,7 +322,7 @@
       for (const tr of doc.querySelectorAll(ROW_SEL)) {
         if (tr.closest('thead') || tr.querySelector('th, [role="columnheader"]')) continue;
         if (dlg && dlg.contains(tr)) continue;
-        if (!isVisible(tr)) continue;
+        if (!rowVisible(tr)) continue;
         const text = clean(tr.innerText);
         if (text.length < 10) continue;
         const m = KEY_RE.exec(text);
@@ -309,6 +333,40 @@
         if (seen.has(key)) continue;
         seen.add(key);
         out.push({ tr, key, text });
+      }
+    }
+    if (!out.length) out.push(...looseRows(dlg));
+    return out;
+  }
+
+  // Dự phòng cho danh sách dựng bằng <div> thường: từ chỗ có số ký hiệu, đi ngược lên tới khung của cả dòng.
+  function looseRows(dlg) {
+    const out = [];
+    const seen = new Set();
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    for (const doc of allDocs()) {
+      const body = doc.body || doc;
+      const walker = (doc.ownerDocument || doc).createTreeWalker(body, NodeFilter.SHOW_TEXT);
+      let n;
+      while ((n = walker.nextNode())) {
+        const m = KEY_RE.exec(n.textContent);
+        if (!m || n.textContent.trim().length > 80) continue;
+        const key = m[0].replace(/[:,]$/, '');
+        const start = n.parentElement;
+        if (!start || seen.has(key) || (dlg && dlg.contains(start)) || !isVisible(start)) continue;
+        if (start.closest('nav, aside, header, ol, [class*="breadcrumb"], [class*="menu"], [class*="sidebar"]')) continue;
+        let row = start;
+        for (let a = start.parentElement; a && a !== body; a = a.parentElement) {
+          const keys = new Set(((a.innerText || '').match(new RegExp(KEY_RE.source, 'gu')) || []).map((k) => k.replace(/[:,]$/, '')));
+          if (keys.size > 1) break; // đã chứa dòng khác
+          row = a;
+          const r = a.getBoundingClientRect();
+          if (r.width >= vw * 0.5 && r.height < 300) break; // đủ rộng như một dòng của bảng
+        }
+        const text = clean(row.innerText);
+        if (text.length < 15) continue;
+        seen.add(key);
+        out.push({ tr: row, key, text });
       }
     }
     return out;
@@ -561,7 +619,9 @@
     (async () => {
       switch (msg.type) {
         case 'ping':
-          return { ok: true };
+          return { ok: true, version: VERSION };
+        case 'getListText':
+          return { ok: true, text: listText() };
         case 'getContext':
           return { ok: true, context: getContext() };
         case 'getFile': {

@@ -123,7 +123,7 @@ Danh sách "van_ban" đã được sắp xếp từ ưu tiên cao xuống thấp
 }
 
 // Báo cáo tổng hợp sau khi kiểm tra tự động nhiều văn bản.
-export function reportMessages(s, items) {
+export function reportMessages(s, items, lists = []) {
   const system = `Bạn là trợ lý văn thư - thư ký lãnh đạo trên hệ thống Văn phòng điện tử.
 Người dùng vừa kiểm tra tự động các văn bản chưa đọc ở các sổ: Văn bản đến (VB đã nhận), Văn bản đi (VB phát hành), Văn bản nội bộ (VB nội bộ đã nhận).
 Dựa trên bản tóm tắt và ý kiến xử lý đề xuất của từng văn bản, hãy lập báo cáo tổng hợp ngắn gọn cho lãnh đạo.
@@ -152,11 +152,14 @@ Chỉ trả về JSON hợp lệ dạng:
       .filter(Boolean)
       .join('\n');
   });
-  let user = lines.join('\n');
+  let user = lines.length ? `Danh sách văn bản đã kiểm tra:\n${lines.join('\n')}` : '';
+  for (const l of lists) {
+    user += `\n\n# Nội dung danh sách ${LOAI_LABEL[l.loai] || ''} trên màn hình (chưa mở từng văn bản; dựa vào số ký hiệu, trích yếu, nơi ban hành để tóm tắt và khuyến nghị; dòng có dấu • thường là chưa đọc)\n${l.text}`;
+  }
   const max = Number(s.maxChars) || 60000;
   if (user.length > max) user = user.slice(0, max);
   return [
     { role: 'system', content: system },
-    { role: 'user', content: `Danh sách văn bản đã kiểm tra:\n${user}\n\nTrả về JSON theo yêu cầu.` }
+    { role: 'user', content: `${user}\n\nTrả về JSON theo yêu cầu.` }
   ];
 }

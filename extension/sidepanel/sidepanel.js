@@ -94,7 +94,7 @@ async function init() {
 
 function updateKeyBox() {
   toggle('keyBox', !state.settings.apiKey);
-  $('modelInfo').textContent = `DeepSeek · ${state.settings.model}`;
+  $('modelInfo').textContent = `v${chrome.runtime.getManifest().version} · DeepSeek · ${state.settings.model}`;
 }
 
 function showTab(name) {
@@ -109,12 +109,7 @@ async function updateTab() {
   state.tab = tab ? { id: tab.id, url: tab.url || '' } : null;
   state.connected = false;
   if (!tab) return;
-  try {
-    const r = await send({ type: 'ping' });
-    state.connected = !!r?.ok;
-  } catch (_) {
-    state.connected = false;
-  }
+  state.connected = await ensureFreshScript();
   const httpPage = /^https?:/.test(state.tab.url);
   toggle('connectBox', !state.connected);
   $('btnConnect').classList.toggle('hidden', !httpPage);
@@ -122,6 +117,21 @@ async function updateTab() {
     ? `Tiện ích chưa được bật trên ${new URL(state.tab.url).hostname}. Bấm để cho phép đọc trang Văn phòng điện tử này.`
     : 'Hãy mở trang Văn phòng điện tử (VPĐT) trong tab hiện tại.';
   if (state.connected) refreshContext();
+}
+
+// Bảo đảm trang đang chạy content script đúng phiên bản; nếu là mã cũ (chưa F5 sau khi cập nhật) thì tiêm lại.
+async function ensureFreshScript() {
+  const want = chrome.runtime.getManifest().version;
+  let r = await send({ type: 'ping' }).catch(() => null);
+  if (r?.ok && r.version === want) return true;
+  try {
+    const pattern = originPattern(state.tab.url);
+    if (!(await chrome.permissions.contains({ origins: [pattern] }))) return !!r?.ok;
+    await injectIntoTab(state.tab.id);
+    await new Promise((res) => setTimeout(res, 300));
+    r = await send({ type: 'ping' }).catch(() => null);
+  } catch (_) {}
+  return !!r?.ok;
 }
 
 function connectSite() {
@@ -757,6 +767,7 @@ async function processDoc(loai, doc, opts) {
 async function runBatch() {
   if (state.busy) return;
   if (!state.settings.apiKey) return batchStatus('Chưa nhập DeepSeek API key (bấm ⚙ Cài đặt).', 'err');
+  state.connected = await ensureFreshScript();
   if (!state.connected) return batchStatus('Tiện ích chưa được bật trên trang VPĐT (xem thông báo phía trên).', 'err');
   const opts = batchOptions();
   if (!opts.sections.length) return batchStatus('Hãy chọn ít nhất một mục để kiểm tra.', 'err');
@@ -773,6 +784,7 @@ async function runBatch() {
 
   const { processed = {} } = await chrome.storage.local.get({ processed: {} });
   const items = state.batch.items;
+  const fallbacks = []; // danh sách không tách được từng dòng -> AI tổng hợp từ chữ trên trang
   let errors = 0;
   try {
     for (const loai of opts.sections) {
@@ -798,8 +810,13 @@ async function runBatch() {
           (before !== todo.length ? `; bỏ qua ${before - todo.length} đã kiểm tra/vượt giới hạn` : '') +
           `. Sẽ kiểm tra ${todo.length}.`
       );
-      if (!all.length && list.diag) {
-        batchLog(`   (Không đọc được bảng danh sách. Chẩn đoán: ${list.diag})`, 'muted');
+      if (!all.length) {
+        batchLog(`   (Không tách được từng dòng của bảng. Chẩn đoán: ${list.diag || 'trang đang chạy mã cũ, hãy tải lại trang (F5)'})`, 'muted');
+        const { text } = await call({ type: 'getListText' }).catch(() => ({ text: '' }));
+        if (text && /\d+\/\S/.test(text)) {
+          fallbacks.push({ loai, text });
+          batchLog('   → Sẽ để AI tổng hợp trực tiếp từ nội dung danh sách trên trang.');
+        }
       }
       if (opts.scope === 'unread' && all.length && !unread.length) {
         batchLog('   (Không nhận ra văn bản chưa đọc. Nếu thực tế còn, hãy chọn phạm vi "Tất cả văn bản trên trang".)', 'muted');
@@ -827,11 +844,11 @@ async function runBatch() {
       await chrome.storage.local.set({ processed });
     }
 
-    if (items.length && !state.batch.stop) {
-      batchStatus(spin(`Đang lập báo cáo tổng hợp ${items.length} văn bản…`));
+    if ((items.length || fallbacks.length) && !state.batch.stop) {
+      batchStatus(spin(`Đang lập báo cáo tổng hợp ${items.length ? items.length + ' văn bản' : 'từ danh sách'}…`));
       try {
         state.abort = new AbortController();
-        const { content } = await chat(state.settings, reportMessages(state.settings, items), { signal: state.abort.signal });
+        const { content } = await chat(state.settings, reportMessages(state.settings, items, fallbacks), { signal: state.abort.signal });
         const report = parseJson(content);
         renderReport(report, content);
         if (opts.export && state.settings.sheetUrl && report) {
@@ -848,6 +865,12 @@ async function runBatch() {
       }
     }
 
+    if (!items.length && !fallbacks.length && !state.batch.stop) {
+      show('batchReport');
+      $('reportOverview').textContent = 'Không có văn bản chưa đọc nào cần kiểm tra ở các mục đã chọn.';
+      ['reportUrgent', 'reportRecs', 'reportDeadlines', 'reportBySo'].forEach((id) => toggle(id + 'Box', false));
+      $('reportExport').replaceChildren();
+    }
     const summary = state.batch.stop
       ? `Đã dừng. Đã kiểm tra ${items.length} văn bản.`
       : `✔ Hoàn tất: kiểm tra ${items.length} văn bản${errors ? `, ${errors} lỗi` : ''}.`;
