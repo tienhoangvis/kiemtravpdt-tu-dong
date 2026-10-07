@@ -9,6 +9,8 @@
   const files = new Map(); // id -> {id, name, mime, kind, size, url, source, time, bytes}
   const pendingFetch = new Map();
   let seq = 0;
+  // Tiền tố theo phiên để ID file không trùng sau khi trang tải lại.
+  const SESSION = Math.random().toString(36).slice(2, 7);
 
   // ---------- Tiện ích ----------
   function sniffKind(buf, name, mime) {
@@ -61,7 +63,7 @@
     if (/^blob:/.test(d.url || '') || !/\.[a-z0-9]{2,4}$/i.test(name)) {
       name = (name.startsWith('blob') || name.length > 40 ? 'file' : name) + '.' + kind;
     }
-    const id = 'f' + ++seq;
+    const id = SESSION + '-f' + ++seq;
     files.set(id, {
       id,
       fp,
@@ -264,6 +266,169 @@
     };
   }
 
+  // ---------- Chế độ tự động: duyệt danh sách, mở / đóng văn bản ----------
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const KEY_RE = /\d+[\p{L}\p{N}.\-()]*\/[\p{L}\p{N}.\-()\/]+/u;
+  const norm = (t) => (t || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+  function docRows() {
+    const out = [];
+    document.querySelectorAll('table tbody tr').forEach((tr) => {
+      if (!isVisible(tr) || tr.closest(DIALOG_SEL)) return;
+      const tds = tr.querySelectorAll('td');
+      if (tds.length < 2) return;
+      const text = clean(tr.innerText);
+      const m = KEY_RE.exec(text);
+      if (!m) return;
+      out.push({ tr, key: m[0].replace(/[:,]$/, ''), text });
+    });
+    return out;
+  }
+
+  // Văn bản chưa đọc: có chấm tròn màu ở đầu dòng hoặc chữ in đậm.
+  function isUnread(tr) {
+    for (const el of tr.querySelectorAll('td *')) {
+      if (el.childElementCount) continue;
+      const r = el.getBoundingClientRect();
+      const st = getComputedStyle(el);
+      if (r.width >= 4 && r.width <= 14 && Math.abs(r.width - r.height) <= 2 && !el.textContent.trim()) {
+        const bg = st.backgroundColor;
+        if (bg && bg !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(bg) && parseFloat(st.borderRadius) >= r.width / 2 - 1) return true;
+      }
+      const t = el.textContent.trim();
+      if (/^[●•⬤]/.test(t)) return true;
+      if (t.length > 15 && (parseInt(st.fontWeight, 10) >= 600 || st.fontWeight === 'bold')) return true;
+    }
+    // Chấm vẽ bằng ::before
+    for (const el of tr.querySelectorAll('td *')) {
+      const b = getComputedStyle(el, '::before');
+      if (b.content && b.content !== 'none' && parseFloat(b.width) <= 14 && parseFloat(b.borderRadius) > 2 && !/rgba\(.*,\s*0\)$/.test(b.backgroundColor)) return true;
+    }
+    return false;
+  }
+
+  function listDocs() {
+    return docRows().map(({ tr, key, text }) => ({ key, unread: isUnread(tr), text: text.slice(0, 400) }));
+  }
+
+  function clickEl(el) {
+    el.scrollIntoView({ block: 'center' });
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
+      el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+    }
+    el.click();
+  }
+
+  function openDoc(key) {
+    const row = docRows().find((r) => r.key === key);
+    if (!row) throw new Error('Không thấy văn bản ' + key + ' trong danh sách.');
+    // Bấm vào phần tử nhỏ nhất chứa số ký hiệu (thường là liên kết màu xanh).
+    let target = null;
+    for (const el of row.tr.querySelectorAll('a, span, div, b, strong, td')) {
+      if ((el.innerText || '').includes(key) && isVisible(el)) {
+        if (!target || target.contains(el)) target = el;
+      }
+    }
+    clickEl(target || row.tr);
+    return { ok: true };
+  }
+
+  function visibleByText(texts, scope = document) {
+    const want = texts.map(norm);
+    const found = [];
+    for (const el of scope.querySelectorAll('a, button, li, span, div, p, [role="menuitem"], [role="tab"]')) {
+      const t = norm(el.innerText);
+      if (!t || t.length > 60 || !want.includes(t) || !isVisible(el)) continue;
+      found.push(el);
+    }
+    // Bỏ phần tử nằm trong breadcrumb ("Văn bản đến / VB đã nhận"), ưu tiên phần tử sâu nhất, nằm bên trái (menu).
+    const notCrumb = (el) => {
+      for (let n = el, i = 0; n && i < 4; n = n.parentElement, i++) {
+        const t = n.innerText || '';
+        if (t.length < 80 && /\S\s*\/\s*\S/.test(t)) return false;
+      }
+      return true;
+    };
+    return found
+      .filter((el) => notCrumb(el) && !found.some((o) => o !== el && el.contains(o)))
+      .sort((x, y) => x.getBoundingClientRect().left - y.getBoundingClientRect().left);
+  }
+
+  const NAV = {
+    den: [['văn bản đến'], ['vb đã nhận', 'văn bản đã nhận']],
+    di: [['văn bản đi'], ['vb phát hành', 'văn bản phát hành', 'văn bản đã phát hành']],
+    noi_bo: [['văn bản nội bộ'], ['vb nội bộ đã nhận', 'văn bản nội bộ đã nhận']]
+  };
+
+  async function gotoSection(loai) {
+    const [parent, child] = NAV[loai] || NAV.den;
+    let items = visibleByText(child);
+    if (!items.length) {
+      const p = visibleByText(parent).filter((el) => !el.closest(DIALOG_SEL) && !/\d/.test(el.innerText));
+      if (!p.length) throw new Error('Không tìm thấy menu "' + parent[0] + '".');
+      clickEl(p[0].closest('a, li, button, [role="menuitem"]') || p[0]);
+      await sleep(700);
+      items = visibleByText(child);
+    }
+    if (!items.length) throw new Error('Không tìm thấy mục "' + child[0] + '" trong menu.');
+    clickEl(items[0].closest('a, button, [role="menuitem"]') || items[0]);
+    return { ok: true };
+  }
+
+  async function loadAttachments(maxFiles = 10) {
+    const dialog = topDialog();
+    if (!dialog) return { clicked: 0 };
+    // Nút danh sách file: có huy hiệu số (vd. biểu tượng nhiều lớp có số 6).
+    const badges = [...dialog.querySelectorAll('span, sup, i, b, div')].filter((el) => {
+      if (el.childElementCount || !/^\d{1,2}$/.test((el.textContent || '').trim()) || !isVisible(el)) return false;
+      const r = el.getBoundingClientRect();
+      return r.width < 36 && r.height < 36 && !el.closest('table, .pagination, [class*="paginat"]');
+    });
+    const toggle = badges.map((b) => b.closest('button, a, [role="button"]') || b.parentElement).find(Boolean);
+    if (!toggle) return { clicked: 0 };
+    const FILE_NAME = /\.(pdf|docx?|xlsx?)\s*$/i;
+    const openList = async () => {
+      clickEl(toggle);
+      await sleep(700);
+      return [...document.querySelectorAll('a, li, span, div, td, p')].filter(
+        (el) => el.childElementCount <= 2 && FILE_NAME.test(el.innerText || '') && (el.innerText || '').length < 250 && isVisible(el)
+      );
+    };
+    let list = await openList();
+    const names = [...new Set(list.map((el) => clean(el.innerText)))].slice(0, maxFiles);
+    let clicked = 0;
+    for (const name of names) {
+      let el = list.find((x) => clean(x.innerText) === name && document.contains(x) && isVisible(x));
+      if (!el) {
+        list = await openList();
+        el = list.find((x) => clean(x.innerText) === name);
+      }
+      if (!el) continue;
+      const before = files.size;
+      clickEl(el);
+      clicked++;
+      for (let i = 0; i < 16 && files.size === before; i++) await sleep(250);
+      await sleep(400);
+    }
+    // Đóng danh sách nếu còn mở.
+    if (list.some((x) => document.contains(x) && isVisible(x))) document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return { clicked, names };
+  }
+
+  async function closeDoc() {
+    const dialog = topDialog();
+    if (!dialog) return { ok: true };
+    const btn =
+      visibleByText(['đóng', 'close'], dialog)[0] ||
+      [...dialog.querySelectorAll('button, a, span, i')].find(
+        (el) => isVisible(el) && (/^[×✕x]$/i.test((el.textContent || '').trim()) || /close|dong/i.test((el.getAttribute('aria-label') || '') + ' ' + el.className))
+      );
+    if (btn) clickEl(btn.closest('button, a') || btn);
+    else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+    for (let i = 0; i < 20 && topDialog(); i++) await sleep(150);
+    return { ok: !topDialog() };
+  }
+
   // ---------- Điền ý kiến xử lý ----------
   function setNativeValue(el, value) {
     const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
@@ -349,6 +514,18 @@
           return { ok: true, rows: listRows(), loai: detectLoai(topDialog()).loai, breadcrumb: breadcrumb() };
         case 'fillOpinion':
           return fillOpinion(msg.text);
+        case 'listDocs': {
+          const { loai, breadcrumb: crumb } = detectLoai(topDialog());
+          return { ok: true, loai, breadcrumb: crumb, inDialog: !!topDialog(), docs: listDocs() };
+        }
+        case 'openDoc':
+          return openDoc(msg.key);
+        case 'loadAttachments':
+          return { ok: true, ...(await loadAttachments(msg.max)) };
+        case 'closeDoc':
+          return closeDoc();
+        case 'gotoSection':
+          return gotoSection(msg.loai);
         default:
           throw new Error('Lệnh không hợp lệ: ' + msg.type);
       }

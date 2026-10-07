@@ -24,6 +24,11 @@ const SHEET_NAMES = {
   noi_bo: 'Văn bản nội bộ'
 };
 const TRIAGE_SHEET = 'Rà soát danh sách';
+const REPORT_SHEET = 'Báo cáo tổng hợp';
+const REPORT_HEADERS = [
+  'Thời gian', 'Phạm vi', 'Số văn bản', 'Tổng quan', 'Cần xử lý ngay', 'Khuyến nghị', 'Mốc thời hạn',
+  'Văn bản đến', 'Văn bản đi', 'Văn bản nội bộ', 'Danh sách văn bản'
+];
 
 const DOC_HEADERS = [
   'Thời gian xuất', 'Số ký hiệu', 'Ngày văn bản', 'Cơ quan/Phòng ban ban hành', 'Loại văn bản',
@@ -55,6 +60,8 @@ function doPost(e) {
           return json_(saveDocument_(req));
         case 'triage':
           return json_(saveTriage_(req));
+        case 'report':
+          return json_(saveReport_(req));
         default:
           return json_({ ok: false, error: 'Lệnh không hợp lệ: ' + req.action });
       }
@@ -131,6 +138,25 @@ function saveTriage_(req) {
   });
   if (rows.length) sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, TRIAGE_HEADERS.length).setValues(rows);
   return { ok: true, sheetName: sheet.getName(), count: rows.length, sheetUrl: ss.getUrl() + '#gid=' + sheet.getSheetId() };
+}
+
+function saveReport_(req) {
+  const ss = spreadsheet_();
+  const sheet = sheet_(ss, REPORT_SHEET, REPORT_HEADERS);
+  const r = req.report || {};
+  const theo = r.theo_so || {};
+  const row = [
+    new Date(), req.scope, (req.docs || []).length, r.tong_quan,
+    (r.can_xu_ly_ngay || []).map(function (x) {
+      return '• ' + [x.so_ky_hieu, x.so_van_ban, x.ly_do, x.han ? 'Hạn: ' + x.han : ''].filter(String).join(' – ');
+    }).join('\n'),
+    list_(r.khuyen_nghi),
+    (r.moc_thoi_han || []).map(function (x) { return '• ' + [x.han, x.viec, x.so_ky_hieu].filter(String).join(' – '); }).join('\n'),
+    theo.den, theo.di, theo.noi_bo,
+    (req.docs || []).map(function (d) { return '• [' + d.so + '] ' + d.key + ': ' + (d.trich_yeu || ''); }).join('\n')
+  ].map(cell_);
+  sheet.appendRow(row);
+  return { ok: true, sheetName: sheet.getName(), row: sheet.getLastRow(), sheetUrl: ss.getUrl() + '#gid=' + sheet.getSheetId() };
 }
 
 // ---------- Tiện ích ----------

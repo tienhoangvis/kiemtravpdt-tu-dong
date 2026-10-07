@@ -29,6 +29,7 @@
   </div>
 
   <nav class="tabs">
+    <button data-tab="batch">Tự động</button>
     <button data-tab="doc" class="active">Văn bản đang xem</button>
     <button data-tab="list">Rà soát danh sách</button>
     <button data-tab="history">Lịch sử</button>
@@ -127,6 +128,48 @@
         <pre id="raw"></pre>
       </details>
     </div>
+  </section>
+
+  <!-- TAB: Kiểm tra tự động văn bản chưa đọc -->
+  <section id="tab-batch" class="tab hidden">
+    <div class="card">
+      <p class="muted">Tự động mở lần lượt các văn bản <b>chưa đọc</b>, đọc nội dung và file đính kèm, tóm tắt, đề xuất ý kiến xử lý,
+        rồi lập báo cáo tổng hợp &amp; khuyến nghị. Trong lúc chạy hãy để nguyên tab VPĐT, không thao tác trên trang.</p>
+      <strong>Kiểm tra các mục</strong>
+      <label class="check"><input type="checkbox" data-sec="den" checked /> Văn bản đến → VB đã nhận</label>
+      <label class="check"><input type="checkbox" data-sec="di" checked /> Văn bản đi → VB phát hành</label>
+      <label class="check"><input type="checkbox" data-sec="noi_bo" checked /> Văn bản nội bộ → VB nội bộ đã nhận</label>
+      <label class="inline mt">Phạm vi:
+        <select id="bScope">
+          <option value="unread">Chỉ văn bản chưa đọc</option>
+          <option value="all">Tất cả văn bản trên trang</option>
+        </select>
+      </label>
+      <label class="inline">Tối đa mỗi mục: <input type="number" id="bMax" class="num" min="1" max="200" value="20" /> văn bản</label>
+      <label class="check"><input type="checkbox" id="bAttach" checked /> Đọc cả file đính kèm</label>
+      <label class="check"><input type="checkbox" id="bSkip" checked /> Bỏ qua văn bản đã kiểm tra ở lần trước</label>
+      <label class="check"><input type="checkbox" id="bExport" checked /> Xuất Google Sheet / Drive (nếu đã cấu hình)</label>
+      <label class="check"><input type="checkbox" id="bRepeat" /> Lặp lại mỗi <input type="number" id="bRepeatMin" class="num" min="5" value="30" /> phút</label>
+      <div class="row mt">
+        <button id="btnBatchStart" class="primary grow">▶ Bắt đầu kiểm tra tự động</button>
+        <button id="btnBatchStop" class="hidden">■ Dừng</button>
+      </div>
+      <div id="batchStatus" class="status hidden"></div>
+      <ol id="batchLog" class="log"></ol>
+      <button id="btnResetProcessed" class="link">Xoá danh sách "đã kiểm tra"</button>
+      <p class="hint">Lưu ý: mở văn bản trên VPĐT sẽ đánh dấu "Đã đọc" như khi bạn tự mở. Chế độ lặp lại chỉ chạy khi side panel và tab VPĐT đang mở.</p>
+    </div>
+
+    <div id="batchReport" class="card hidden">
+      <strong>📊 Báo cáo tổng hợp &amp; khuyến nghị</strong>
+      <p id="reportOverview"></p>
+      <div id="reportUrgentBox"><strong class="sub">Cần xử lý ngay</strong><ul id="reportUrgent"></ul></div>
+      <div id="reportRecsBox"><strong class="sub">Khuyến nghị</strong><ul id="reportRecs"></ul></div>
+      <div id="reportDeadlinesBox"><strong class="sub">Mốc thời hạn</strong><ul id="reportDeadlines"></ul></div>
+      <div id="reportBySoBox"><strong class="sub">Theo sổ văn bản</strong><ul id="reportBySo"></ul></div>
+      <div id="reportExport" class="hint"></div>
+    </div>
+    <div id="batchItems"></div>
   </section>
 
   <!-- TAB 2: Rà soát danh sách -->

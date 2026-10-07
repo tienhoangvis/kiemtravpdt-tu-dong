@@ -18,6 +18,13 @@ rồi ghi vào Google Sheet (mỗi sổ một trang tính) kèm file gốc trên
 
 ## Tính năng
 
+- **🤖 Kiểm tra tự động văn bản chưa đọc** (tab *Tự động*): tiện ích tự vào lần lượt
+  **Văn bản đến → VB đã nhận**, **Văn bản đi → VB phát hành**, **Văn bản nội bộ → VB nội bộ đã nhận**,
+  tìm các văn bản **chưa đọc** (có chấm xanh / chữ in đậm), mở từng văn bản, đọc file chính và file đính kèm,
+  tóm tắt, đề xuất ý kiến xử lý, ghi Google Sheet/Drive, đóng văn bản rồi sang văn bản tiếp theo.
+  Cuối cùng lập **Báo cáo tổng hợp & khuyến nghị** (việc cần xử lý ngay, khuyến nghị, mốc thời hạn).
+  Có thể **lặp lại mỗi N phút** và tự bỏ qua văn bản đã kiểm tra.
+
 - **Phân tích văn bản đang xem**: tóm tắt, số ký hiệu, cơ quan ban hành, độ khẩn, nội dung chính,
   nhiệm vụ & thời hạn, tóm tắt từng file đính kèm, mức độ ưu tiên, **ý kiến xử lý đề xuất**.
 - **Tự thu thập file**: bắt các file PDF/DOCX/XLSX mà trình xem của VPĐT tải về (kể cả khi
@@ -74,6 +81,8 @@ dữ liệu và file nằm trong Google Drive của tài khoản đó – không
 8. Trong tiện ích: ⚙ **Cài đặt → Google Sheet & Google Drive**: dán URL, nhập **Mã bảo mật** (đúng TOKEN ở bước 5),
    bấm **Kiểm tra Google Sheet** → thấy "✔ Kết nối thành công (tài khoản thoang9741@gmail.com)" → **Lưu cài đặt**.
 
+> **Đã cài script từ bản trước?** Dán lại `Code.gs` mới (có thêm trang *Báo cáo tổng hợp*) và triển khai phiên bản mới như dưới đây.
+>
 > Khi sửa `Code.gs` sau này, cần **Triển khai → Quản lý các bản triển khai → ✏ → Phiên bản: Mới → Triển khai**
 > thì thay đổi mới có hiệu lực (URL giữ nguyên).
 
@@ -83,9 +92,29 @@ Kết quả trên Google Sheet:
   trích yếu, độ khẩn, nơi nhận, người ký, tóm tắt, nội dung chính, nhiệm vụ/thời hạn, hạn xử lý, mức ưu tiên,
   hướng xử lý, **ý kiến xử lý**, lưu ý, link file trên Drive, link VPĐT.
 - Trang **Rà soát danh sách**: kết quả rà soát ưu tiên của cả danh sách.
+- Trang **Báo cáo tổng hợp**: mỗi lần kiểm tra tự động một dòng (tổng quan, cần xử lý ngay, khuyến nghị, mốc thời hạn).
 - Google Drive: thư mục **VPĐT - Văn bản** → theo sổ văn bản → theo số ký hiệu.
 
 ## Sử dụng
+
+### Kiểm tra tự động các văn bản chưa đọc
+
+1. Mở trang VPĐT (đã đăng nhập), bấm biểu tượng tiện ích để mở side panel → tab **Tự động**.
+2. Tick các mục cần kiểm tra (mặc định cả 3), phạm vi **Chỉ văn bản chưa đọc**.
+3. Bấm **▶ Bắt đầu kiểm tra tự động** và **không thao tác trên tab VPĐT** cho đến khi xong
+   (mỗi văn bản khoảng 10–30 giây tuỳ độ dài).
+4. Xem kết quả ngay trong side panel: **Báo cáo tổng hợp & khuyến nghị** ở trên, bên dưới là thẻ từng văn bản
+   (tóm tắt, ý kiến xử lý đề xuất, mức ưu tiên). Bấm **Xem chi tiết →** để xem đầy đủ / điền ý kiến xử lý.
+5. Nếu đã cấu hình Google Sheet: mỗi văn bản được ghi vào trang tính tương ứng, báo cáo ghi vào trang
+   **Báo cáo tổng hợp**, file lưu trên Google Drive.
+
+> - Mở văn bản bằng tiện ích cũng đánh dấu **"Đã đọc"** trên VPĐT như khi bạn tự mở.
+> - Tiện ích nhận biết văn bản chưa đọc qua chấm xanh / chữ in đậm ở đầu dòng. Nếu báo "không nhận ra văn bản chưa đọc"
+>   trong khi thực tế vẫn còn, chọn phạm vi **Tất cả văn bản trên trang**.
+> - Chỉ xét các văn bản đang hiển thị ở trang 1 của danh sách – tăng **Bản ghi** trên VPĐT nếu cần nhiều hơn.
+> - Chế độ **Lặp lại** chỉ chạy khi side panel và tab VPĐT còn mở; khi xong có thông báo trên màn hình.
+
+### Phân tích từng văn bản (thủ công)
 
 1. Bấm biểu tượng tiện ích để mở **side panel** bên phải.
 2. Trên VPĐT vào một trong các mục: **Văn bản đến → VB đã nhận**, **Văn bản đi → VB phát hành**

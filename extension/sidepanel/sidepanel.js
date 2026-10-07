@@ -2,7 +2,7 @@ import { getSettings, saveSettings } from '../lib/settings.js';
 import { originPattern, syncContentScripts, injectIntoTab } from '../lib/sites.js';
 import { extractText, base64ToBytes, detectKind } from '../lib/extract.js';
 import { chat, parseJson } from '../lib/deepseek.js';
-import { analyzeMessages, triageMessages, LOAI_LABEL } from '../lib/prompts.js';
+import { analyzeMessages, triageMessages, reportMessages, LOAI_LABEL } from '../lib/prompts.js';
 import { postToSheet } from '../lib/sheets.js';
 
 const $ = (id) => document.getElementById(id);
@@ -24,7 +24,8 @@ const state = {
   abort: null,
   lastResult: null,
   lastMeta: null, // {loai, title, url, model, files: [file meta]}
-  lastTriage: null
+  lastTriage: null,
+  batch: null // {running, stop, tabId, timer, items}
 };
 
 // ---------- Khởi tạo ----------
@@ -50,6 +51,7 @@ async function init() {
   $('btnExport').onclick = () => exportDocument();
   $('btnTriageExport').onclick = exportTriage;
   $('loaiSelect').onchange = renderFiles;
+  initBatch();
   $('btnClearHistory').onclick = async () => {
     await chrome.storage.local.set({ history: [] });
     renderHistory();
@@ -69,6 +71,7 @@ async function init() {
   let filesTimer = null;
   chrome.runtime.onMessage.addListener((msg, sender) => {
     if (!sender.tab || sender.tab.id !== state.tab?.id) return;
+    if (state.batch?.running) return; // chế độ tự động tự điều khiển
     if (msg.type === 'filesChanged') {
       clearTimeout(filesTimer);
       filesTimer = setTimeout(() => refreshContext(), 400);
@@ -145,9 +148,14 @@ function connectSite() {
   });
 }
 
+function workTabId() {
+  return state.batch?.running ? state.batch.tabId : state.tab?.id;
+}
+
 function send(msg) {
-  if (!state.tab) return Promise.reject(new Error('Không có tab.'));
-  return chrome.tabs.sendMessage(state.tab.id, { target: 'vpdt', ...msg }, { frameId: 0 });
+  const tabId = workTabId();
+  if (!tabId) return Promise.reject(new Error('Không có tab.'));
+  return chrome.tabs.sendMessage(tabId, { target: 'vpdt', ...msg }, { frameId: 0 });
 }
 
 async function call(msg) {
@@ -256,7 +264,7 @@ async function onUpload(e) {
 }
 
 function fileKey(f) {
-  return (f.remote ? `${state.tab.id}:` : '') + f.id;
+  return (f.remote ? `${workTabId()}:` : '') + f.id;
 }
 
 async function fileBytes(f) {
@@ -304,41 +312,19 @@ async function analyze({ auto }) {
       }
     }
 
-    const docFiles = [];
-    const warnings = [];
-    for (const [i, f] of chosen.entries()) {
-      setStatus('status', spin(`Đang đọc file ${i + 1}/${chosen.length}: ${f.name}`));
-      try {
-        const { text, warning } = await fileText(f);
-        docFiles.push({ name: f.name, text, warning });
-        if (warning) warnings.push(`${f.name}: ${warning}`);
-      } catch (e) {
-        warnings.push(`${f.name}: ${e.message}`);
-      }
-    }
-
-    const messages = analyzeMessages(state.settings, {
-      loai,
-      breadcrumb: ctx.breadcrumb,
-      docTitle: ctx.docTitle,
-      pageText: ctx.pageText,
-      viewerText: ctx.viewerText,
-      files: docFiles
-    });
-    setStatus('status', spin(`Đang gửi cho DeepSeek (${state.settings.model})…`));
     state.abort = new AbortController();
-    const { content, usage, model } = await chat(state.settings, messages, { signal: state.abort.signal });
-    const result = parseJson(content);
-    state.lastMeta = {
+    const { result, content, usage, warnings, meta } = await analyzeCore({
+      ctx,
       loai,
-      title: ctx.docTitle || key,
-      url: ctx.url || '',
-      model: model || state.settings.model,
-      files: chosen.map(({ id, name, kind, size, remote }) => ({ id, name, kind, size, remote }))
-    };
+      key,
+      files: chosen,
+      signal: state.abort.signal,
+      progress: (t) => setStatus('status', spin(t))
+    });
+    state.lastMeta = meta;
     render(result, content);
     hide('exportStatus');
-    await saveHistory({ key, title: ctx.docTitle || key, time: Date.now(), result, raw: content, meta: { ...state.lastMeta, files: [] } });
+    await saveHistory({ key, title: meta.title, time: Date.now(), result, raw: content, meta: { ...meta, files: [] } });
 
     const tokens = usage ? ` · ${usage.total_tokens} token` : '';
     setStatus('status', `✔ Hoàn tất${tokens}.${warnings.length ? '\n⚠ ' + warnings.join('\n⚠ ') : ''}`, warnings.length ? '' : 'ok');
@@ -348,6 +334,41 @@ async function analyze({ auto }) {
   } finally {
     setBusy(false);
   }
+}
+
+// Đọc file + gọi DeepSeek cho một văn bản. Dùng chung cho phân tích thủ công và tự động.
+async function analyzeCore({ ctx, loai, key, files, signal, progress = () => {} }) {
+  const docFiles = [];
+  const warnings = [];
+  for (const [i, f] of files.entries()) {
+    progress(`Đang đọc file ${i + 1}/${files.length}: ${f.name}`);
+    try {
+      const { text, warning } = await fileText(f);
+      docFiles.push({ name: f.name, text, warning });
+      if (warning) warnings.push(`${f.name}: ${warning}`);
+    } catch (e) {
+      warnings.push(`${f.name}: ${e.message}`);
+    }
+  }
+  const messages = analyzeMessages(state.settings, {
+    loai,
+    breadcrumb: ctx.breadcrumb,
+    docTitle: ctx.docTitle,
+    pageText: ctx.pageText,
+    viewerText: ctx.viewerText,
+    files: docFiles
+  });
+  progress(`Đang gửi cho DeepSeek (${state.settings.model})…`);
+  const { content, usage, model } = await chat(state.settings, messages, { signal });
+  const result = parseJson(content);
+  const meta = {
+    loai,
+    title: ctx.docTitle || key,
+    url: ctx.url || '',
+    model: model || state.settings.model,
+    files: files.map(({ id, name, kind, size, remote }) => ({ id, name, kind, size, remote }))
+  };
+  return { result, content, usage, warnings, meta };
 }
 
 function setBusy(b) {
@@ -504,51 +525,64 @@ async function exportDocument() {
   try {
     // Lấy ý kiến xử lý đã sửa trong ô nhập.
     const record = { ...state.lastResult, y_kien_xu_ly: $('opinion').value };
-    const files = [];
-    const skipped = [];
-    if (state.settings.saveFilesToDrive) {
-      let total = 0;
-      for (const f of meta.files || []) {
-        try {
-          const bytes = await fileBytes(f);
-          if (total + bytes.length > DRIVE_MAX_BYTES) {
-            skipped.push(`${f.name} (quá lớn)`);
-            continue;
-          }
-          total += bytes.length;
-          files.push({ name: f.name, mime: MIME[f.kind] || 'application/octet-stream', base64: bytesToBase64(bytes) });
-        } catch (e) {
-          skipped.push(`${f.name} (${e.message})`);
-        }
-      }
-    }
-    setStatus('exportStatus', spin(`Đang ghi Google Sheet${files.length ? ` và lưu ${files.length} file lên Drive` : ''}…`));
-    const r = await postToSheet(state.settings, {
-      action: 'document',
-      loai: meta.loai,
-      title: meta.title,
-      url: meta.url,
-      model: meta.model,
-      record,
-      files
-    });
+    const { r, skipped } = await exportCore(meta, record, (t) => setStatus('exportStatus', spin(t)));
     const box = $('exportStatus');
     box.className = 'status ok';
-    const a = el('a', '', 'Mở Google Sheet');
-    a.href = r.sheetUrl;
-    a.target = '_blank';
-    box.replaceChildren(
-      `✔ Đã ${r.updated ? 'cập nhật' : 'thêm'} dòng ${r.row} – trang "${r.sheetName}"` +
-        (r.files?.length ? `, lưu ${r.files.length} file lên Drive` : '') +
-        (skipped.length ? `.\n⚠ Không lưu: ${skipped.join(', ')}` : '') + '. ',
-      a
-    );
+    box.replaceChildren(exportSummary(r, skipped) + ' ', sheetLink(r.sheetUrl));
     show('exportStatus');
   } catch (e) {
     setStatus('exportStatus', '✖ ' + e.message, 'err');
   } finally {
     $('btnExport').disabled = false;
   }
+}
+
+async function exportCore(meta, record, progress = () => {}) {
+  const files = [];
+  const skipped = [];
+  if (state.settings.saveFilesToDrive) {
+    let total = 0;
+    for (const f of meta.files || []) {
+      try {
+        const bytes = await fileBytes(f);
+        if (total + bytes.length > DRIVE_MAX_BYTES) {
+          skipped.push(`${f.name} (quá lớn)`);
+          continue;
+        }
+        total += bytes.length;
+        files.push({ name: f.name, mime: MIME[f.kind] || 'application/octet-stream', base64: bytesToBase64(bytes) });
+      } catch (e) {
+        skipped.push(`${f.name} (${e.message})`);
+      }
+    }
+  }
+  progress(`Đang ghi Google Sheet${files.length ? ` và lưu ${files.length} file lên Drive` : ''}…`);
+  const r = await postToSheet(state.settings, {
+    action: 'document',
+    loai: meta.loai,
+    title: meta.title,
+    url: meta.url,
+    model: meta.model,
+    record,
+    files
+  });
+  return { r, skipped };
+}
+
+function exportSummary(r, skipped = []) {
+  return (
+    `✔ Đã ${r.updated ? 'cập nhật' : 'thêm'} dòng ${r.row} – trang "${r.sheetName}"` +
+    (r.files?.length ? `, lưu ${r.files.length} file lên Drive` : '') +
+    (skipped.length ? `.\n⚠ Không lưu: ${skipped.join(', ')}` : '') +
+    '.'
+  );
+}
+
+function sheetLink(url) {
+  const a = el('a', '', 'Mở Google Sheet');
+  a.href = url;
+  a.target = '_blank';
+  return a;
 }
 
 async function exportTriage() {
@@ -571,6 +605,320 @@ async function exportTriage() {
   } finally {
     $('btnTriageExport').disabled = false;
   }
+}
+
+// ---------- Kiểm tra tự động văn bản chưa đọc ----------
+const SECTION_CRUMB = { den: /vb đã nhận|văn bản đã nhận/i, di: /phát hành/i, noi_bo: /nội bộ đã nhận/i };
+const SECTION_NAME = {
+  den: 'Văn bản đến → VB đã nhận',
+  di: 'Văn bản đi → VB phát hành',
+  noi_bo: 'Văn bản nội bộ → VB nội bộ đã nhận'
+};
+const PROCESSED_MAX = 3000;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function initBatch() {
+  const b = state.settings.batch || {};
+  document.querySelectorAll('#tab-batch [data-sec]').forEach((cb) => (cb.checked = (b.sections || ['den', 'di', 'noi_bo']).includes(cb.dataset.sec)));
+  $('bScope').value = b.scope || 'unread';
+  $('bMax').value = b.max || 20;
+  $('bAttach').checked = b.attach !== false;
+  $('bSkip').checked = b.skip !== false;
+  $('bExport').checked = b.export !== false;
+  $('bRepeat').checked = !!b.repeat;
+  $('bRepeatMin').value = b.repeatMin || 30;
+  $('btnBatchStart').onclick = () => runBatch();
+  $('btnBatchStop').onclick = stopBatch;
+  $('btnResetProcessed').onclick = async () => {
+    await chrome.storage.local.set({ processed: {} });
+    batchStatus('Đã xoá danh sách văn bản đã kiểm tra. Lần chạy sau sẽ kiểm tra lại từ đầu.', 'ok');
+  };
+}
+
+function batchOptions() {
+  return {
+    sections: [...document.querySelectorAll('#tab-batch [data-sec]')].filter((c) => c.checked).map((c) => c.dataset.sec),
+    scope: $('bScope').value,
+    max: Math.max(1, Math.min(200, Number($('bMax').value) || 20)),
+    attach: $('bAttach').checked,
+    skip: $('bSkip').checked,
+    export: $('bExport').checked,
+    repeat: $('bRepeat').checked,
+    repeatMin: Math.max(5, Number($('bRepeatMin').value) || 30)
+  };
+}
+
+function batchStatus(msg, kind = '') {
+  setStatus('batchStatus', msg, kind);
+}
+
+function batchLog(text, kind = '') {
+  const li = el('li', kind, `${new Date().toLocaleTimeString('vi-VN')}  ${text}`);
+  $('batchLog').append(li);
+  li.scrollIntoView({ block: 'nearest' });
+}
+
+function stopBatch() {
+  if (state.batch) {
+    state.batch.stop = true;
+    clearTimeout(state.batch.timer);
+    state.abort?.abort();
+  }
+  if (!state.batch?.running) {
+    state.batch = null;
+    toggle('btnBatchStop', false);
+    batchStatus('Đã dừng kiểm tra tự động.', '');
+  }
+}
+
+async function waitFor(fn, { timeout = 15000, interval = 500 } = {}) {
+  const t0 = Date.now();
+  let last;
+  while (Date.now() - t0 < timeout) {
+    if (state.batch?.stop) throw new Error('Đã dừng.');
+    try {
+      last = await fn();
+      if (last) return last;
+    } catch (_) {}
+    await sleep(interval);
+  }
+  return null;
+}
+
+async function ensureSection(loai) {
+  const here = await waitFor(() => call({ type: 'listDocs' }), { timeout: 20000 });
+  if (!here) throw new Error('Trang VPĐT không phản hồi. Hãy tải lại trang (F5) rồi chạy lại.');
+  if (here.inDialog) await call({ type: 'closeDoc' }).catch(() => {});
+  if (here.loai === loai && SECTION_CRUMB[loai].test(here.breadcrumb || '')) return here;
+  await call({ type: 'gotoSection', loai });
+  const t0 = Date.now();
+  const ok = await waitFor(
+    async () => {
+      const r = await call({ type: 'listDocs' });
+      const arrived = r.loai === loai && SECTION_CRUMB[loai].test(r.breadcrumb || '');
+      // Đợi bảng tải xong (hoặc tối đa 5 giây nếu danh sách trống).
+      return arrived && (r.docs.length || Date.now() - t0 > 5000) ? r : null;
+    },
+    { timeout: 25000 }
+  );
+  if (!ok) throw new Error(`Không mở được mục ${SECTION_NAME[loai]}. Hãy mở mục này bằng tay rồi chạy lại.`);
+  await sleep(800);
+  return call({ type: 'listDocs' });
+}
+
+async function processDoc(loai, doc, opts) {
+  await call({ type: 'clearFiles' });
+  state.textCache.clear();
+  state.bytesCache.clear();
+  await call({ type: 'openDoc', key: doc.key });
+
+  const opened = await waitFor(async () => {
+    const { context } = await call({ type: 'getContext' });
+    return context.inDialog && context.docTitle ? context : null;
+  });
+  if (!opened) throw new Error('Không mở được văn bản (không thấy cửa sổ "Xem:").');
+
+  // Chờ trình xem tải file chính.
+  await waitFor(async () => (await call({ type: 'getContext' })).context.files.length > 0, { timeout: 12000 });
+  if (opts.attach) {
+    batchStatus(spin(`${doc.key}: đang mở các file đính kèm…`));
+    const r = await call({ type: 'loadAttachments', max: 10 }).catch(() => null);
+    if (r?.clicked) await sleep(1000);
+  }
+  const { context: ctx } = await call({ type: 'getContext' });
+  const files = (ctx.files || []).map((f) => ({ ...f, remote: true }));
+
+  state.abort = new AbortController();
+  const out = await analyzeCore({
+    ctx,
+    loai,
+    key: doc.key,
+    files,
+    signal: state.abort.signal,
+    progress: (t) => batchStatus(spin(`${doc.key}: ${t}`))
+  });
+  const item = { loai, key: doc.key, title: ctx.docTitle, ...out, exported: '' };
+  await saveHistory({ key: ctx.docTitle || doc.key, title: ctx.docTitle || doc.key, time: Date.now(), result: out.result, raw: out.content, meta: { ...out.meta, files: [] } });
+
+  if (opts.export && state.settings.sheetUrl && out.result) {
+    try {
+      const { r, skipped } = await exportCore(out.meta, out.result, (t) => batchStatus(spin(`${doc.key}: ${t}`)));
+      item.exported = exportSummary(r, skipped);
+      item.sheetUrl = r.sheetUrl;
+    } catch (e) {
+      item.exported = '✖ ' + e.message;
+    }
+  }
+  await call({ type: 'closeDoc' }).catch(() => {});
+  await sleep(700);
+  return item;
+}
+
+async function runBatch() {
+  if (state.busy) return;
+  if (!state.settings.apiKey) return batchStatus('Chưa nhập DeepSeek API key (bấm ⚙ Cài đặt).', 'err');
+  if (!state.connected) return batchStatus('Tiện ích chưa được bật trên trang VPĐT (xem thông báo phía trên).', 'err');
+  const opts = batchOptions();
+  if (!opts.sections.length) return batchStatus('Hãy chọn ít nhất một mục để kiểm tra.', 'err');
+  await saveSettings({ batch: opts });
+
+  clearTimeout(state.batch?.timer);
+  state.batch = { running: true, stop: false, tabId: state.tab.id, timer: null, items: [] };
+  setBusy(true);
+  $('btnBatchStart').disabled = true;
+  show('btnBatchStop');
+  $('batchLog').replaceChildren();
+  $('batchItems').replaceChildren();
+  hide('batchReport');
+
+  const { processed = {} } = await chrome.storage.local.get({ processed: {} });
+  const items = state.batch.items;
+  let errors = 0;
+  try {
+    for (const loai of opts.sections) {
+      if (state.batch.stop) break;
+      batchStatus(spin(`Đang mở ${SECTION_NAME[loai]}…`));
+      batchLog(`📂 ${SECTION_NAME[loai]}`);
+      let list;
+      try {
+        list = await ensureSection(loai);
+      } catch (e) {
+        errors++;
+        batchLog(`✖ ${e.message}`, 'err');
+        continue;
+      }
+      const all = list.docs || [];
+      const unread = all.filter((d) => d.unread);
+      let todo = opts.scope === 'unread' ? unread : all;
+      const before = todo.length;
+      if (opts.skip) todo = todo.filter((d) => !processed[`${loai}|${d.key}`]);
+      todo = todo.slice(0, opts.max);
+      batchLog(
+        `   Danh sách có ${all.length} văn bản, ${unread.length} chưa đọc` +
+          (before !== todo.length ? `; bỏ qua ${before - todo.length} đã kiểm tra/vượt giới hạn` : '') +
+          `. Sẽ kiểm tra ${todo.length}.`
+      );
+      if (opts.scope === 'unread' && all.length && !unread.length) {
+        batchLog('   (Không nhận ra văn bản chưa đọc. Nếu thực tế còn, hãy chọn phạm vi "Tất cả văn bản trên trang".)', 'muted');
+      }
+      for (const [i, d] of todo.entries()) {
+        if (state.batch.stop) break;
+        batchStatus(spin(`${SECTION_NAME[loai]} – ${i + 1}/${todo.length}: ${d.key}`));
+        try {
+          const item = await processDoc(loai, d, opts);
+          items.push(item);
+          processed[`${loai}|${d.key}`] = Date.now();
+          renderBatchItem(item);
+          batchLog(`   ✔ ${d.key}${item.result?.muc_do_uu_tien ? ` – ưu tiên ${item.result.muc_do_uu_tien}` : ''}`, 'ok');
+        } catch (e) {
+          if (state.batch.stop) break;
+          errors++;
+          batchLog(`   ✖ ${d.key}: ${e.message}`, 'err');
+          await call({ type: 'closeDoc' }).catch(() => {});
+          await sleep(500);
+        }
+      }
+      // Ghi lại sau mỗi mục để không mất tiến độ nếu bị dừng giữa chừng.
+      const keys = Object.keys(processed);
+      if (keys.length > PROCESSED_MAX) keys.sort((a, b) => processed[a] - processed[b]).slice(0, keys.length - PROCESSED_MAX).forEach((k) => delete processed[k]);
+      await chrome.storage.local.set({ processed });
+    }
+
+    if (items.length && !state.batch.stop) {
+      batchStatus(spin(`Đang lập báo cáo tổng hợp ${items.length} văn bản…`));
+      try {
+        state.abort = new AbortController();
+        const { content } = await chat(state.settings, reportMessages(state.settings, items), { signal: state.abort.signal });
+        const report = parseJson(content);
+        renderReport(report, content);
+        if (opts.export && state.settings.sheetUrl && report) {
+          const r = await postToSheet(state.settings, {
+            action: 'report',
+            scope: opts.sections.map((x) => LOAI_LABEL[x]).join(', '),
+            report,
+            docs: items.map((it) => ({ so: LOAI_LABEL[it.loai], key: it.key, trich_yeu: it.result?.trich_yeu || it.title }))
+          }).catch((e) => ({ error: e.message }));
+          $('reportExport').replaceChildren(r.error ? '✖ ' + r.error : `✔ Đã ghi báo cáo vào trang "${r.sheetName}". `, ...(r.sheetUrl ? [sheetLink(r.sheetUrl)] : []));
+        }
+      } catch (e) {
+        batchLog(`✖ Không lập được báo cáo tổng hợp: ${e.message}`, 'err');
+      }
+    }
+
+    const summary = state.batch.stop
+      ? `Đã dừng. Đã kiểm tra ${items.length} văn bản.`
+      : `✔ Hoàn tất: kiểm tra ${items.length} văn bản${errors ? `, ${errors} lỗi` : ''}.`;
+    batchStatus(summary, state.batch.stop ? '' : errors ? '' : 'ok');
+    notify('Kiểm tra VPĐT tự động', items.length ? `${summary} Mở side panel để xem tóm tắt và khuyến nghị.` : summary);
+  } finally {
+    const repeat = opts.repeat && !state.batch.stop;
+    state.batch.running = false;
+    setBusy(false);
+    $('btnBatchStart').disabled = false;
+    if (repeat) {
+      const at = new Date(Date.now() + opts.repeatMin * 60000);
+      state.batch.timer = setTimeout(() => runBatch(), opts.repeatMin * 60000);
+      batchLog(`⏱ Lần kiểm tra tiếp theo lúc ${at.toLocaleTimeString('vi-VN')} (giữ side panel và tab VPĐT mở).`);
+    } else {
+      hide('btnBatchStop');
+      state.batch = null;
+    }
+  }
+}
+
+function renderBatchItem(it) {
+  const r = it.result || {};
+  const card = el('div', 'card tri ' + priorityClass(r.muc_do_uu_tien));
+  const head = el('div', 'head');
+  head.append(el('strong', '', `${r.so_ky_hieu || it.key}`));
+  const pill = el('span', 'pill');
+  setPriority(pill, r.muc_do_uu_tien);
+  head.append(pill);
+  card.append(head, el('div', 'muted', [LOAI_LABEL[it.loai], r.co_quan_ban_hanh, r.han_xu_ly && `Hạn: ${r.han_xu_ly}`].filter(Boolean).join(' · ')));
+  if (r.trich_yeu) card.append(el('div', '', r.trich_yeu));
+  card.append(el('p', '', r.tom_tat || (it.result ? '' : 'AI không trả về đúng định dạng.')));
+  if (r.y_kien_xu_ly) card.append(el('div', 'op', '✍ ' + r.y_kien_xu_ly));
+  if (it.warnings?.length) card.append(el('div', 'hint', '⚠ ' + it.warnings.join('; ')));
+  if (it.exported) {
+    const ex = el('div', 'hint', it.exported + ' ');
+    if (it.sheetUrl) ex.append(sheetLink(it.sheetUrl));
+    card.append(ex);
+  }
+  const open = el('button', 'link', 'Xem chi tiết →');
+  open.onclick = () => {
+    showTab('doc');
+    state.lastMeta = { ...it.meta, files: [] };
+    hide('exportStatus');
+    render(it.result, it.content);
+  };
+  card.append(open);
+  $('batchItems').append(card);
+}
+
+function renderReport(r, raw) {
+  show('batchReport');
+  $('reportExport').replaceChildren();
+  if (!r) {
+    $('reportOverview').textContent = raw || '';
+    ['reportUrgent', 'reportRecs', 'reportDeadlines', 'reportBySo'].forEach((id) => $(id).replaceChildren());
+    return;
+  }
+  $('reportOverview').textContent = r.tong_quan || '';
+  const fill = (id, arr, fmt) => {
+    $(id).replaceChildren(...(arr || []).map((x) => el('li', '', fmt(x))));
+    toggle(id + 'Box', (arr || []).length > 0);
+  };
+  fill('reportUrgent', r.can_xu_ly_ngay, (x) => (typeof x === 'string' ? x : [x.so_ky_hieu, x.so_van_ban, x.ly_do, x.han && `Hạn: ${x.han}`].filter(Boolean).join(' – ')));
+  fill('reportRecs', r.khuyen_nghi, (x) => String(x));
+  fill('reportDeadlines', r.moc_thoi_han, (x) => (typeof x === 'string' ? x : [x.han, x.viec, x.so_ky_hieu].filter(Boolean).join(' – ')));
+  const so = r.theo_so || {};
+  fill('reportBySo', Object.entries(so).filter(([, v]) => v), ([k, v]) => `${LOAI_LABEL[k] || k}: ${v}`);
+}
+
+function notify(title, message) {
+  try {
+    chrome.notifications?.create({ type: 'basic', iconUrl: chrome.runtime.getURL('icons/icon128.png'), title, message });
+  } catch (_) {}
 }
 
 // ---------- Lịch sử ----------

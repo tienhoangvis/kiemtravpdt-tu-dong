@@ -122,3 +122,10 @@ pre { white-space: pre-wrap; word-break: break-word; font-size: 11px; max-height
 label.inline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 select { font: inherit; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); }
 .status a { color: var(--primary); }
+input.num { width: 64px; font: inherit; padding: 2px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); }
+.log { list-style: none; padding: 0; margin: 8px 0 0; max-height: 220px; overflow: auto; font-size: 11.5px; font-family: Consolas, monospace; }
+.log li { padding: 1px 0; white-space: pre-wrap; }
+.log li.ok { color: var(--ok); }
+.log li.err { color: var(--err); }
+.log li.muted { color: var(--muted); }
+strong.sub { display: block; margin-top: 8px; font-size: 12.5px; }

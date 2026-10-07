@@ -24,6 +24,8 @@ export const DEFAULT_SETTINGS = {
   sheetUrl: '',
   autoExport: false,
   saveFilesToDrive: true,
+  // Kiểm tra tự động văn bản chưa đọc
+  batch: { sections: ['den', 'di', 'noi_bo'], scope: 'unread', max: 20, attach: true, skip: true, export: true, repeat: false, repeatMin: 30 },
   sites: []
 };
 

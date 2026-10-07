@@ -121,3 +121,42 @@ Danh sách "van_ban" đã được sắp xếp từ ưu tiên cao xuống thấp
     { role: 'user', content: `Danh sách văn bản:\n${user}\n\nTrả về JSON theo yêu cầu.` }
   ];
 }
+
+// Báo cáo tổng hợp sau khi kiểm tra tự động nhiều văn bản.
+export function reportMessages(s, items) {
+  const system = `Bạn là trợ lý văn thư - thư ký lãnh đạo trên hệ thống Văn phòng điện tử.
+Người dùng vừa kiểm tra tự động các văn bản chưa đọc ở các sổ: Văn bản đến (VB đã nhận), Văn bản đi (VB phát hành), Văn bản nội bộ (VB nội bộ đã nhận).
+Dựa trên bản tóm tắt và ý kiến xử lý đề xuất của từng văn bản, hãy lập báo cáo tổng hợp ngắn gọn cho lãnh đạo.
+
+${orgBlock(s)}
+${s.customInstructions ? '\nYêu cầu bổ sung:\n' + s.customInstructions : ''}
+
+Chỉ trả về JSON hợp lệ dạng:
+{
+  "tong_quan": "2-4 câu nhận xét chung về các văn bản đã kiểm tra",
+  "can_xu_ly_ngay": [{"so_ky_hieu": "", "so_van_ban": "Văn bản đến | Văn bản đi | Văn bản nội bộ", "ly_do": "vì sao cần ưu tiên", "han": ""}],
+  "khuyen_nghi": ["khuyến nghị hành động cụ thể cho lãnh đạo, sắp xếp theo mức độ quan trọng"],
+  "theo_so": {"den": "nhận xét ngắn về văn bản đến", "di": "nhận xét ngắn về văn bản đi", "noi_bo": "nhận xét ngắn về văn bản nội bộ"},
+  "moc_thoi_han": [{"han": "dd/mm/yyyy", "viec": "", "so_ky_hieu": ""}]
+}`;
+  const lines = items.map((it, i) => {
+    const r = it.result || {};
+    return [
+      `${i + 1}. [${LOAI_LABEL[it.loai] || ''}] ${r.so_ky_hieu || it.key}: ${r.trich_yeu || it.title || ''}`,
+      r.do_khan && `   Độ khẩn: ${r.do_khan}`,
+      r.han_xu_ly && `   Hạn: ${r.han_xu_ly}`,
+      r.muc_do_uu_tien && `   Ưu tiên: ${r.muc_do_uu_tien}`,
+      r.tom_tat && `   Tóm tắt: ${r.tom_tat}`,
+      r.y_kien_xu_ly && `   Ý kiến đề xuất: ${r.y_kien_xu_ly}`
+    ]
+      .filter(Boolean)
+      .join('\n');
+  });
+  let user = lines.join('\n');
+  const max = Number(s.maxChars) || 60000;
+  if (user.length > max) user = user.slice(0, max);
+  return [
+    { role: 'system', content: system },
+    { role: 'user', content: `Danh sách văn bản đã kiểm tra:\n${user}\n\nTrả về JSON theo yêu cầu.` }
+  ];
+}
