@@ -215,13 +215,45 @@
     return rows.slice(0, 100);
   }
 
+  // Nhận diện sổ văn bản: 'den' (Văn bản đến), 'di' (Văn bản đi), 'noi_bo' (Văn bản nội bộ).
+  function classify(text) {
+    const t = (text || '').toLowerCase();
+    if (/nội bộ|vbnb/.test(t)) return 'noi_bo';
+    if (/văn bản đi|vb phát hành|vb đã gửi|trình ký/.test(t)) return 'di';
+    if (/văn bản đến|vb đã nhận|vb chờ duyệt|vb đến/.test(t)) return 'den';
+    return '';
+  }
+
+  function breadcrumb() {
+    for (const el of document.querySelectorAll('nav, ol, ul, div')) {
+      if (el.childElementCount > 8) continue;
+      const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+      if (t.length < 80 && /văn bản (đến|đi|nội bộ)\s*\/\s*\S/i.test(t) && isVisible(el)) return t;
+    }
+    return '';
+  }
+
+  function detectLoai(dialog) {
+    const crumb = breadcrumb();
+    let loai = classify(crumb);
+    if (!loai) loai = classify(decodeURIComponent(location.pathname + location.hash).replace(/[-_]/g, ' '));
+    if (!loai && /incoming|den\b/i.test(location.href)) loai = 'den';
+    if (!loai && /outgoing|vbdi|vb-di/i.test(location.href)) loai = 'di';
+    if (!loai && /internal|noibo|noi-bo/i.test(location.href)) loai = 'noi_bo';
+    if (!loai && dialog && /Đơn vị ngoài|Chuyển theo dõi/.test(dialog.innerText)) loai = 'di';
+    return { loai: loai || 'den', breadcrumb: crumb };
+  }
+
   function getContext() {
     const dialog = topDialog();
     const root = dialog || document.body;
+    const { loai, breadcrumb: crumb } = detectLoai(dialog);
     return {
       url: location.href,
       pageTitle: document.title,
       inDialog: !!dialog,
+      loai,
+      breadcrumb: crumb,
       docTitle: docTitle(root),
       pageText: clean(root.innerText, 20000),
       viewerText: clean(viewerText(root), 60000),
@@ -314,7 +346,7 @@
           files.clear();
           return { ok: true };
         case 'getListRows':
-          return { ok: true, rows: listRows() };
+          return { ok: true, rows: listRows(), loai: detectLoai(topDialog()).loai, breadcrumb: breadcrumb() };
         case 'fillOpinion':
           return fillOpinion(msg.text);
         default:

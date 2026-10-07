@@ -76,6 +76,28 @@
   </div>
 
   <div class="card">
+    <h2>Google Sheet &amp; Google Drive</h2>
+    <p class="hint">Kết quả được ghi vào Google Sheet (mỗi sổ một trang tính: Văn bản đến / Văn bản đi / Văn bản nội bộ)
+      và file văn bản được lưu vào thư mục <b>VPĐT - Văn bản</b> trên Google Drive của tài khoản triển khai script
+      (vd. thoang9741@gmail.com). Cách tạo script: xem mục "Kết nối Google Sheet" trong README của repo
+      (file <code>apps-script/Code.gs</code>).</p>
+    <label>URL ứng dụng web Google Apps Script
+      <small class="muted">Dạng https://script.google.com/macros/s/…/exec</small>
+      <input type="text" id="sheetUrl" placeholder="https://script.google.com/macros/s/.../exec" />
+    </label>
+    <label>Mã bảo mật (TOKEN)
+      <small class="muted">Phải trùng với hằng số TOKEN trong Code.gs.</small>
+      <input type="password" id="sheetToken" autocomplete="off" />
+    </label>
+    <label class="check"><input type="checkbox" id="autoExport" /> Tự động xuất ra Google Sheet sau mỗi lần phân tích</label>
+    <label class="check"><input type="checkbox" id="saveFilesToDrive" /> Lưu kèm file văn bản (PDF/DOCX) vào Google Drive</label>
+    <div class="row mt">
+      <button id="btnTestSheet">Kiểm tra Google Sheet</button>
+      <span id="sheetResult"></span>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>Hành vi</h2>
     <label class="check"><input type="checkbox" id="autoAnalyze" /> Tự động phân tích khi mở một văn bản (khi side panel đang mở)</label>
     <label class="check"><input type="checkbox" id="useCache" /> Dùng lại kết quả trong lịch sử khi mở lại cùng văn bản (chế độ tự động)</label>

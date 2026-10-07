@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Kiểm tra VPĐT tự động (DeepSeek AI)",
   "short_name": "KiemTraVPDT",
-  "version": "1.0.0",
-  "description": "Đọc tự động văn bản đến trên hệ thống Văn phòng điện tử, tóm tắt nội dung và đề xuất ý kiến xử lý bằng DeepSeek AI.",
+  "version": "1.1.0",
+  "description": "Đọc tự động văn bản đến, văn bản đi, văn bản nội bộ trên Văn phòng điện tử; tóm tắt, đề xuất ý kiến xử lý bằng DeepSeek AI và xuất ra Google Sheet / Google Drive.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -24,7 +24,20 @@
     "default_path": "sidepanel/sidepanel.html"
   },
   "options_page": "options/options.html",
-  "permissions": ["storage", "sidePanel", "scripting", "tabs", "activeTab"],
-  "host_permissions": ["https://api.deepseek.com/*"],
-  "optional_host_permissions": ["https://*/*", "http://*/*"]
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "scripting",
+    "tabs",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://api.deepseek.com/*",
+    "https://script.google.com/*",
+    "https://script.googleusercontent.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
+  ]
 }

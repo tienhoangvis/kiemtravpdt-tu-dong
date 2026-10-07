@@ -2,10 +2,12 @@ import { getSettings, saveSettings } from '../lib/settings.js';
 import { originPattern, syncContentScripts, injectIntoTab } from '../lib/sites.js';
 import { extractText, base64ToBytes, detectKind } from '../lib/extract.js';
 import { chat, parseJson } from '../lib/deepseek.js';
-import { analyzeMessages, triageMessages } from '../lib/prompts.js';
+import { analyzeMessages, triageMessages, LOAI_LABEL } from '../lib/prompts.js';
+import { postToSheet } from '../lib/sheets.js';
 
 const $ = (id) => document.getElementById(id);
 const HISTORY_MAX = 50;
+const DRIVE_MAX_BYTES = 25 * 1024 * 1024;
 
 const state = {
   settings: null,
@@ -16,10 +18,13 @@ const state = {
   known: new Set(),
   localFiles: new Map(), // id -> {id, name, kind, size, bytes}
   textCache: new Map(), // key -> {text, warning}
+  bytesCache: new Map(), // key -> Uint8Array
   docOpenedAt: 0,
   busy: false,
   abort: null,
-  lastResult: null
+  lastResult: null,
+  lastMeta: null, // {loai, title, url, model, files: [file meta]}
+  lastTriage: null
 };
 
 // ---------- Khởi tạo ----------
@@ -42,6 +47,9 @@ async function init() {
   $('btnCopy').onclick = copyOpinion;
   $('btnFill').onclick = fillOpinion;
   $('btnTriage').onclick = triage;
+  $('btnExport').onclick = () => exportDocument();
+  $('btnTriageExport').onclick = exportTriage;
+  $('loaiSelect').onchange = renderFiles;
   $('btnClearHistory').onclick = async () => {
     await chrome.storage.local.set({ history: [] });
     renderHistory();
@@ -174,6 +182,7 @@ function renderFiles() {
   const ctx = state.context;
   $('docTitle').textContent = ctx?.docTitle || (ctx?.inDialog ? '(Hộp thoại đang mở)' : 'Chưa mở văn bản nào. Vào Văn bản đến → VB đã nhận và bấm vào một văn bản.');
   $('docTitle').classList.toggle('muted', !ctx?.docTitle);
+  $('loaiDetected').textContent = ctx?.loai ? `(nhận diện: ${LOAI_LABEL[ctx.loai]})` : '';
 
   const list = allFiles();
   for (const f of list) {
@@ -231,6 +240,7 @@ async function clearFiles() {
   state.selected.clear();
   state.known.clear();
   state.textCache.clear();
+  state.bytesCache.clear();
   if (state.connected) await call({ type: 'clearFiles' }).catch(() => {});
   await refreshContext();
 }
@@ -245,16 +255,24 @@ async function onUpload(e) {
   renderFiles();
 }
 
-async function fileText(f) {
-  const key = (f.remote ? `${state.tab.id}:` : '') + f.id;
-  if (state.textCache.has(key)) return state.textCache.get(key);
-  let bytes;
-  if (f.remote) {
-    const r = await call({ type: 'getFile', id: f.id });
-    bytes = base64ToBytes(r.base64);
-  } else {
-    bytes = state.localFiles.get(f.id).bytes.slice();
+function fileKey(f) {
+  return (f.remote ? `${state.tab.id}:` : '') + f.id;
+}
+
+async function fileBytes(f) {
+  const key = fileKey(f);
+  if (!state.bytesCache.has(key)) {
+    const bytes = f.remote ? base64ToBytes((await call({ type: 'getFile', id: f.id })).base64) : state.localFiles.get(f.id).bytes;
+    state.bytesCache.set(key, bytes);
   }
+  return state.bytesCache.get(key);
+}
+
+async function fileText(f) {
+  const key = fileKey(f);
+  if (state.textCache.has(key)) return state.textCache.get(key);
+  // pdf.js chiếm quyền sở hữu bộ đệm, nên truyền bản sao.
+  const bytes = (await fileBytes(f)).slice();
   const out = await extractText(bytes, { name: f.name, kind: f.kind, maxPdfPages: state.settings.maxPdfPages });
   state.textCache.set(key, out);
   return out;
@@ -268,6 +286,7 @@ async function analyze({ auto }) {
   try {
     if (state.connected) await refreshContext();
     const ctx = state.context || {};
+    const loai = currentLoai();
     const chosen = allFiles().filter((f) => state.selected.has(f.id));
 
     if (!ctx.docTitle && !chosen.length && !ctx.viewerText) {
@@ -279,6 +298,7 @@ async function analyze({ auto }) {
     if (auto && state.settings.useCache) {
       const hit = (await loadHistory()).find((h) => h.key === key);
       if (hit) {
+        state.lastMeta = hit.meta || null;
         render(hit.result, hit.raw);
         return setStatus('status', 'Đã có kết quả phân tích trước đó (từ lịch sử). Bấm "Đọc & phân tích" để chạy lại.', 'ok');
       }
@@ -298,6 +318,8 @@ async function analyze({ auto }) {
     }
 
     const messages = analyzeMessages(state.settings, {
+      loai,
+      breadcrumb: ctx.breadcrumb,
       docTitle: ctx.docTitle,
       pageText: ctx.pageText,
       viewerText: ctx.viewerText,
@@ -305,13 +327,22 @@ async function analyze({ auto }) {
     });
     setStatus('status', spin(`Đang gửi cho DeepSeek (${state.settings.model})…`));
     state.abort = new AbortController();
-    const { content, usage } = await chat(state.settings, messages, { signal: state.abort.signal });
+    const { content, usage, model } = await chat(state.settings, messages, { signal: state.abort.signal });
     const result = parseJson(content);
+    state.lastMeta = {
+      loai,
+      title: ctx.docTitle || key,
+      url: ctx.url || '',
+      model: model || state.settings.model,
+      files: chosen.map(({ id, name, kind, size, remote }) => ({ id, name, kind, size, remote }))
+    };
     render(result, content);
-    await saveHistory({ key, title: ctx.docTitle || key, time: Date.now(), result, raw: content });
+    hide('exportStatus');
+    await saveHistory({ key, title: ctx.docTitle || key, time: Date.now(), result, raw: content, meta: { ...state.lastMeta, files: [] } });
 
     const tokens = usage ? ` · ${usage.total_tokens} token` : '';
     setStatus('status', `✔ Hoàn tất${tokens}.${warnings.length ? '\n⚠ ' + warnings.join('\n⚠ ') : ''}`, warnings.length ? '' : 'ok');
+    if (result && state.settings.autoExport && state.settings.sheetUrl) await exportDocument();
   } catch (e) {
     setStatus('status', '✖ ' + e.message, 'err');
   } finally {
@@ -408,15 +439,20 @@ async function triage() {
   if (!state.settings.apiKey) return setStatus('triageStatus', 'Chưa nhập DeepSeek API key (bấm ⚙ Cài đặt).', 'err');
   setBusy(true);
   try {
-    const { rows } = await call({ type: 'getListRows' });
+    const { rows, loai: detected } = await call({ type: 'getListRows' });
+    const sel = $('loaiSelect').value;
+    const loai = sel === 'auto' ? detected || 'den' : sel;
     if (!rows.length) throw new Error('Không tìm thấy bảng danh sách văn bản trên trang.');
     setStatus('triageStatus', spin(`Đang gửi ${rows.length} dòng cho DeepSeek…`));
     state.abort = new AbortController();
-    const { content } = await chat(state.settings, triageMessages(state.settings, rows), { signal: state.abort.signal });
+    const { content } = await chat(state.settings, triageMessages(state.settings, rows, loai), { signal: state.abort.signal });
     const r = parseJson(content);
     if (!r) throw new Error('AI không trả về đúng định dạng.\n' + content.slice(0, 500));
+    state.lastTriage = { loai, overview: r.tong_quan || '', items: r.van_ban || [] };
     renderTriage(r);
-    setStatus('triageStatus', `✔ Đã rà soát ${rows.length} văn bản.`, 'ok');
+    hide('triageExportStatus');
+    setStatus('triageStatus', `✔ Đã rà soát ${rows.length} ${LOAI_LABEL[loai].toLowerCase()}.`, 'ok');
+    if (state.settings.autoExport && state.settings.sheetUrl) await exportTriage();
   } catch (e) {
     setStatus('triageStatus', '✖ ' + e.message, 'err');
   } finally {
@@ -438,6 +474,103 @@ function renderTriage(r) {
     if (v.y_kien_so_bo) card.append(el('div', 'op', v.y_kien_so_bo));
     return card;
   }));
+}
+
+// ---------- Xuất Google Sheet / Drive ----------
+function currentLoai() {
+  const sel = $('loaiSelect').value;
+  return sel === 'auto' ? state.context?.loai || 'den' : sel;
+}
+
+function bytesToBase64(bytes) {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+const MIME = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  doc: 'application/msword',
+  txt: 'text/plain'
+};
+
+async function exportDocument() {
+  const meta = state.lastMeta;
+  if (!state.lastResult || !meta) return setStatus('exportStatus', 'Chưa có kết quả phân tích để xuất.', 'err');
+  if (!state.settings.sheetUrl) return setStatus('exportStatus', 'Chưa cấu hình Google Sheet (bấm ⚙ Cài đặt).', 'err');
+  $('btnExport').disabled = true;
+  try {
+    // Lấy ý kiến xử lý đã sửa trong ô nhập.
+    const record = { ...state.lastResult, y_kien_xu_ly: $('opinion').value };
+    const files = [];
+    const skipped = [];
+    if (state.settings.saveFilesToDrive) {
+      let total = 0;
+      for (const f of meta.files || []) {
+        try {
+          const bytes = await fileBytes(f);
+          if (total + bytes.length > DRIVE_MAX_BYTES) {
+            skipped.push(`${f.name} (quá lớn)`);
+            continue;
+          }
+          total += bytes.length;
+          files.push({ name: f.name, mime: MIME[f.kind] || 'application/octet-stream', base64: bytesToBase64(bytes) });
+        } catch (e) {
+          skipped.push(`${f.name} (${e.message})`);
+        }
+      }
+    }
+    setStatus('exportStatus', spin(`Đang ghi Google Sheet${files.length ? ` và lưu ${files.length} file lên Drive` : ''}…`));
+    const r = await postToSheet(state.settings, {
+      action: 'document',
+      loai: meta.loai,
+      title: meta.title,
+      url: meta.url,
+      model: meta.model,
+      record,
+      files
+    });
+    const box = $('exportStatus');
+    box.className = 'status ok';
+    const a = el('a', '', 'Mở Google Sheet');
+    a.href = r.sheetUrl;
+    a.target = '_blank';
+    box.replaceChildren(
+      `✔ Đã ${r.updated ? 'cập nhật' : 'thêm'} dòng ${r.row} – trang "${r.sheetName}"` +
+        (r.files?.length ? `, lưu ${r.files.length} file lên Drive` : '') +
+        (skipped.length ? `.\n⚠ Không lưu: ${skipped.join(', ')}` : '') + '. ',
+      a
+    );
+    show('exportStatus');
+  } catch (e) {
+    setStatus('exportStatus', '✖ ' + e.message, 'err');
+  } finally {
+    $('btnExport').disabled = false;
+  }
+}
+
+async function exportTriage() {
+  const t = state.lastTriage;
+  if (!t) return;
+  if (!state.settings.sheetUrl) return setStatus('triageExportStatus', 'Chưa cấu hình Google Sheet (bấm ⚙ Cài đặt).', 'err');
+  $('btnTriageExport').disabled = true;
+  try {
+    setStatus('triageExportStatus', spin('Đang ghi Google Sheet…'));
+    const r = await postToSheet(state.settings, { action: 'triage', loai: t.loai, overview: t.overview, items: t.items });
+    const box = $('triageExportStatus');
+    box.className = 'status ok';
+    const a = el('a', '', 'Mở Google Sheet');
+    a.href = r.sheetUrl;
+    a.target = '_blank';
+    box.replaceChildren(`✔ Đã ghi ${r.count} dòng vào trang "${r.sheetName}". `, a);
+    show('triageExportStatus');
+  } catch (e) {
+    setStatus('triageExportStatus', '✖ ' + e.message, 'err');
+  } finally {
+    $('btnTriageExport').disabled = false;
+  }
 }
 
 // ---------- Lịch sử ----------
@@ -463,6 +596,8 @@ async function renderHistory() {
     if (h.result?.y_kien_xu_ly) li.append(el('div', 'muted', h.result.y_kien_xu_ly));
     li.onclick = () => {
       showTab('doc');
+      state.lastMeta = h.meta || { loai: 'den', title: h.title, url: '', model: '', files: [] };
+      hide('exportStatus');
       render(h.result, h.raw);
     };
     ul.append(li);

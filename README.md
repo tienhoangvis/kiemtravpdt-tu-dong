@@ -1,18 +1,20 @@
 # Kiểm tra VPĐT tự động – Chrome Extension dùng DeepSeek AI
 
-Tiện ích Chrome giúp **đọc tự động văn bản đến** trên hệ thống Văn phòng điện tử (VPĐT),
-**tóm tắt nội dung** và **đề xuất ý kiến xử lý** bằng AI của DeepSeek.
+Tiện ích Chrome giúp **đọc tự động văn bản** trên hệ thống Văn phòng điện tử (VPĐT),
+**tóm tắt nội dung**, **đề xuất ý kiến xử lý** bằng AI của DeepSeek và **xuất kết quả ra
+Google Sheet, lưu file vào Google Drive**.
 
-Tiện ích làm theo đúng quy trình kiểm tra và xử lý văn bản nội bộ:
+Tiện ích làm theo đúng quy trình kiểm tra và xử lý văn bản nội bộ, cho cả 3 sổ văn bản:
 
-1. Vào mục **Văn bản đến** → **VB đã nhận**
-2. Mở văn bản, **xem nội dung file văn bản**
-3. **Xem các file đi kèm** theo văn bản
-4. **Tóm tắt nội dung** → **đưa ra ý kiến xử lý**
+| Sổ văn bản | Mục trên VPĐT | Quy trình |
+|---|---|---|
+| **Văn bản đến** | VB đã nhận | Xem nội dung file → xem file đi kèm → tóm tắt → ý kiến xử lý → xuất Google Sheet/Drive |
+| **Văn bản đi** | VB phát hành | Đọc nội dung → tóm tắt → ý kiến xử lý (theo dõi, đôn đốc) → xuất Google Sheet/Drive |
+| **Văn bản nội bộ** | VB nội bộ đã nhận | Đọc nội dung → tóm tắt → ý kiến xử lý → xuất Google Sheet/Drive |
 
-Bước 2 → 4 được tự động hoá: tiện ích lấy file PDF/DOCX mà VPĐT đang hiển thị, đọc chữ
-ngay trên máy, gửi cho DeepSeek và trả về bản tóm tắt cùng ý kiến xử lý để bạn kiểm tra,
-sửa và điền vào ô **"Ý kiến xử lý"**.
+Tiện ích lấy file PDF/DOCX mà VPĐT đang hiển thị, đọc chữ ngay trên máy, gửi cho DeepSeek
+và trả về bản tóm tắt cùng ý kiến xử lý để bạn kiểm tra, sửa, điền vào ô **"Ý kiến xử lý"**
+rồi ghi vào Google Sheet (mỗi sổ một trang tính) kèm file gốc trên Google Drive.
 
 ## Tính năng
 
@@ -26,6 +28,10 @@ sửa và điền vào ô **"Ý kiến xử lý"**.
 - **Chế độ tự động**: mở văn bản là tiện ích tự đọc và phân tích.
 - **Rà soát danh sách**: đọc các dòng trong bảng "Chưa xử lý", sắp xếp theo mức ưu tiên
   (Hỏa tốc, có hạn, giấy mời…) và đề xuất hướng xử lý sơ bộ.
+- **Tự nhận diện sổ văn bản** (đến / đi / nội bộ) theo trang đang mở – AI soạn ý kiến phù hợp từng loại;
+  có thể chọn tay nếu nhận diện sai.
+- **Xuất Google Sheet + lưu Google Drive**: mỗi văn bản một dòng (cập nhật nếu đã có cùng số ký hiệu),
+  file gốc lưu trong thư mục `VPĐT - Văn bản/<Sổ văn bản>/<Số ký hiệu>/`. Có thể bật tự động xuất.
 - **Lịch sử** các văn bản đã phân tích (lưu trên máy).
 - Cấu hình danh sách phòng/ban, chức danh, yêu cầu riêng để AI soạn bút phê đúng văn phong đơn vị.
 
@@ -48,17 +54,52 @@ sửa và điền vào ô **"Ý kiến xử lý"**.
 3. Mở trang VPĐT, bấm biểu tượng tiện ích → **Bật trên trang này** → đồng ý cấp quyền.
    Sau đó **tải lại trang (F5)** để tiện ích thu thập file ngay từ đầu.
 
+## Kết nối Google Sheet & Google Drive (tài khoản thoang9741@gmail.com)
+
+Tiện ích ghi dữ liệu qua một **Google Apps Script** chạy dưới tài khoản Google của bạn, nên
+dữ liệu và file nằm trong Google Drive của tài khoản đó – không cần tạo dự án Google Cloud.
+
+1. Mở trình duyệt, **đăng nhập Google bằng tài khoản `thoang9741@gmail.com`**.
+2. Vào <https://sheets.new> để tạo Google Sheet mới, đặt tên, ví dụ **VPĐT - Tổng hợp văn bản**.
+3. Trên Sheet: menu **Tiện ích mở rộng → Apps Script**.
+4. Xoá nội dung có sẵn trong `Code.gs`, dán toàn bộ nội dung file
+   [`apps-script/Code.gs`](apps-script/Code.gs) trong repo này.
+5. Sửa dòng `const TOKEN = '...'` thành một chuỗi bí mật của bạn (ví dụ `Vishipel@2026#abc`). Bấm 💾 **Lưu**.
+6. Bấm **Triển khai → Tùy chọn triển khai mới** → bánh răng ⚙ chọn **Ứng dụng web**:
+   - **Thực thi dưới dạng**: *Tôi (thoang9741@gmail.com)*
+   - **Người có quyền truy cập**: *Bất kỳ ai*
+   - Bấm **Triển khai** → **Cấp quyền truy cập** → chọn tài khoản → *Nâng cao → Đi tới … (không an toàn)* → **Cho phép**
+     (đây là script của chính bạn nên Google cảnh báo như vậy).
+7. Copy **URL ứng dụng web** (kết thúc bằng `/exec`).
+8. Trong tiện ích: ⚙ **Cài đặt → Google Sheet & Google Drive**: dán URL, nhập **Mã bảo mật** (đúng TOKEN ở bước 5),
+   bấm **Kiểm tra Google Sheet** → thấy "✔ Kết nối thành công (tài khoản thoang9741@gmail.com)" → **Lưu cài đặt**.
+
+> Khi sửa `Code.gs` sau này, cần **Triển khai → Quản lý các bản triển khai → ✏ → Phiên bản: Mới → Triển khai**
+> thì thay đổi mới có hiệu lực (URL giữ nguyên).
+
+Kết quả trên Google Sheet:
+
+- Trang **Văn bản đến**, **Văn bản đi**, **Văn bản nội bộ**: thời gian xuất, số ký hiệu, ngày, cơ quan ban hành, loại,
+  trích yếu, độ khẩn, nơi nhận, người ký, tóm tắt, nội dung chính, nhiệm vụ/thời hạn, hạn xử lý, mức ưu tiên,
+  hướng xử lý, **ý kiến xử lý**, lưu ý, link file trên Drive, link VPĐT.
+- Trang **Rà soát danh sách**: kết quả rà soát ưu tiên của cả danh sách.
+- Google Drive: thư mục **VPĐT - Văn bản** → theo sổ văn bản → theo số ký hiệu.
+
 ## Sử dụng
 
 1. Bấm biểu tượng tiện ích để mở **side panel** bên phải.
-2. Trên VPĐT vào **Văn bản đến → VB đã nhận → Chưa xử lý**, bấm vào một văn bản.
+2. Trên VPĐT vào một trong các mục: **Văn bản đến → VB đã nhận**, **Văn bản đi → VB phát hành**
+   hoặc **Văn bản nội bộ → VB nội bộ đã nhận**, bấm vào một văn bản.
+   Kiểm tra dòng **Sổ văn bản** trong side panel đã nhận diện đúng (chọn tay nếu sai).
 3. Bấm vào **từng file đi kèm** trong trình xem (biểu tượng nhiều lớp) để tiện ích thu thập
    – các file hiện trong mục **File đã thu thập**, tick chọn file muốn đọc.
 4. Bấm **🤖 Đọc & phân tích bằng AI**.
 5. Sửa lại **Ý kiến xử lý đề xuất** nếu cần → bấm **Ý kiến xử lý** trên VPĐT, nhấp vào ô nhập
    → bấm **✍ Điền vào ô "Ý kiến xử lý"** trong side panel → kiểm tra và gửi.
+6. Bấm **📤 Xuất ra Google Sheet / Drive** (hoặc bật *Tự động xuất* trong Cài đặt).
 
-Tab **Rà soát danh sách**: khi đang ở trang danh sách văn bản, bấm **Rà soát** để AI sắp xếp ưu tiên toàn bộ danh sách.
+Tab **Rà soát danh sách**: khi đang ở trang danh sách văn bản (đến / đi / nội bộ), bấm **Rà soát** để AI sắp xếp
+ưu tiên toàn bộ danh sách, rồi **Xuất danh sách ra Google Sheet** nếu cần.
 
 ## Lưu ý
 
@@ -68,11 +109,15 @@ Tab **Rà soát danh sách**: khi đang ở trang danh sách văn bản, bấm *
 - File `.doc` (Word 97-2003) chưa được hỗ trợ – dùng bản PDF/DOCX.
 - Nội dung văn bản được gửi tới DeepSeek để xử lý. Không dùng cho văn bản **Mật/Tối mật** hoặc
   văn bản mà quy định của đơn vị không cho phép gửi ra dịch vụ bên ngoài.
-- API key chỉ lưu trong `chrome.storage.local` trên máy, không đồng bộ.
+- Văn bản và file được gửi tới Google Drive/Sheet của tài khoản triển khai Apps Script. Giữ bí mật URL `/exec`
+  và mã bảo mật (TOKEN); nếu lộ, đổi TOKEN trong `Code.gs` và triển khai lại.
+- API key và TOKEN chỉ lưu trong `chrome.storage.local` trên máy, không đồng bộ.
 
 ## Cấu trúc mã nguồn
 
 ```
+apps-script/
+└── Code.gs                # Google Apps Script: ghi Google Sheet + lưu file Google Drive
 extension/
 ├── manifest.json          # Manifest V3
 ├── background.js          # Service worker: mở side panel, đăng ký content script
@@ -83,7 +128,8 @@ extension/
 ├── options/               # Trang cài đặt
 ├── lib/
 │   ├── deepseek.js        # Gọi DeepSeek Chat Completions API
-│   ├── prompts.js         # Câu lệnh cho AI (tóm tắt + ý kiến xử lý, rà soát danh sách)
+│   ├── sheets.js          # Gửi kết quả sang Google Apps Script (Sheet/Drive)
+│   ├── prompts.js         # Câu lệnh cho AI theo từng sổ văn bản (đến / đi / nội bộ)
 │   ├── extract.js         # Trích chữ từ PDF (pdf.js), DOCX, XLSX
 │   ├── settings.js        # Cấu hình
 │   ├── sites.js           # Cấp quyền & đăng ký script cho trang VPĐT

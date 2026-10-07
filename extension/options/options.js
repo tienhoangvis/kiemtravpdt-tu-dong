@@ -1,11 +1,12 @@
 import { getSettings, saveSettings } from '../lib/settings.js';
 import { syncContentScripts } from '../lib/sites.js';
 import { chat } from '../lib/deepseek.js';
+import { postToSheet } from '../lib/sheets.js';
 
 const $ = (id) => document.getElementById(id);
-const TEXT = ['apiKey', 'model', 'baseUrl', 'orgName', 'userRole', 'departments', 'customInstructions'];
+const TEXT = ['apiKey', 'model', 'baseUrl', 'orgName', 'userRole', 'departments', 'customInstructions', 'sheetUrl', 'sheetToken'];
 const NUM = ['temperature', 'maxChars', 'maxPdfPages'];
-const BOOL = ['autoAnalyze', 'useCache'];
+const BOOL = ['autoAnalyze', 'useCache', 'autoExport', 'saveFilesToDrive'];
 
 let settings;
 
@@ -74,6 +75,22 @@ $('btnTest').onclick = async () => {
     $('testResult').textContent = `✔ Kết nối thành công (${model}): ${content.trim().slice(0, 40)}`;
   } catch (e) {
     $('testResult').textContent = '✖ ' + e.message;
+  }
+};
+
+$('btnTestSheet').onclick = async () => {
+  const s = { ...settings, ...collect() };
+  const out = $('sheetResult');
+  out.replaceChildren('Đang kiểm tra…');
+  try {
+    const r = await postToSheet(s, { action: 'ping' }, { timeoutMs: 60000 });
+    const a = document.createElement('a');
+    a.href = r.sheetUrl;
+    a.target = '_blank';
+    a.textContent = r.name;
+    out.replaceChildren(`✔ Kết nối thành công${r.user ? ` (tài khoản ${r.user})` : ''}: `, a);
+  } catch (e) {
+    out.replaceChildren('✖ ' + e.message);
   }
 };
 

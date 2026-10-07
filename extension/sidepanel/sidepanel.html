@@ -41,7 +41,16 @@
         <strong>Văn bản</strong>
         <button id="btnRefresh" class="link">↻ Làm mới</button>
       </div>
-      <p id="docTitle" class="muted">Mở một văn bản (Văn bản đến → VB đã nhận → bấm vào văn bản).</p>
+      <p id="docTitle" class="muted">Mở một văn bản (Văn bản đến / Văn bản đi / Văn bản nội bộ → bấm vào văn bản).</p>
+      <label class="inline">Sổ văn bản:
+        <select id="loaiSelect">
+          <option value="auto">Tự nhận diện</option>
+          <option value="den">Văn bản đến</option>
+          <option value="di">Văn bản đi</option>
+          <option value="noi_bo">Văn bản nội bộ</option>
+        </select>
+        <span id="loaiDetected" class="muted"></span>
+      </label>
 
       <div class="row between mt">
         <strong>File đã thu thập <span id="fileCount" class="badge">0</span></strong>
@@ -81,6 +90,10 @@
           <button id="btnFill" class="primary grow">✍ Điền vào ô "Ý kiến xử lý"</button>
         </div>
         <p class="hint">Bấm nút "Ý kiến xử lý" trên VPĐT, nhấp vào ô nhập nội dung rồi bấm "Điền". Luôn kiểm tra lại trước khi gửi.</p>
+        <div class="row">
+          <button id="btnExport" class="grow">📤 Xuất ra Google Sheet / Drive</button>
+        </div>
+        <div id="exportStatus" class="status hidden"></div>
       </div>
 
       <div class="card">
@@ -126,7 +139,11 @@
       <div id="triageStatus" class="status hidden"></div>
     </div>
     <div id="triageResult" class="hidden">
-      <div class="card"><p id="triageOverview"></p></div>
+      <div class="card">
+        <p id="triageOverview"></p>
+        <button id="btnTriageExport">📤 Xuất danh sách ra Google Sheet</button>
+        <div id="triageExportStatus" class="status hidden"></div>
+      </div>
       <div id="triageItems"></div>
     </div>
   </section>
